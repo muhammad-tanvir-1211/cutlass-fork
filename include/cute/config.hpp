@@ -34,13 +34,13 @@
 #  define CUTE_HOST_DEVICE __forceinline__ __host__ __device__
 #  define CUTE_DEVICE      __forceinline__          __device__
 #  define CUTE_HOST        __forceinline__ __host__
-#elif defined(__SYCL_CUDA_ARCH__)
+#elif defined(__SYCL_DEVICE_ONLY__)
 #  define CUTE_HOST_DEVICE __attribute__((always_inline))
 #  define CUTE_DEVICE      __attribute__((always_inline))
 #  define CUTE_HOST        inline
 #else
-#  define CUTE_HOST_DEVICE [[intel::device_indirectly_callable]] inline 
-#  define CUTE_DEVICE      [[intel::device_indirectly_callable]] inline
+#  define CUTE_HOST_DEVICE inline
+#  define CUTE_DEVICE      inline
 #  define CUTE_HOST        inline
 #endif // CUTE_HOST_DEVICE, CUTE_DEVICE
 
@@ -140,7 +140,7 @@
 // IO
 //
 
-#if defined(SYCL_LANGUAGE_VERSION)
+#if defined(CUTLASS_ENABLE_SYCL)
 #include <sycl/sycl.hpp>
 namespace cute
 {

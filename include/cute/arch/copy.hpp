@@ -94,7 +94,7 @@ using DefaultCopy = AutoVectorizingCopy;
 // Global memory prefetch into L2
 //
 
-static void
+CUTE_HOST_DEVICE static void
 prefetch(void const* gmem_ptr)
 {
 #if defined(__CUDA_ARCH__)

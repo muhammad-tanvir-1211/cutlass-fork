@@ -1109,7 +1109,7 @@ struct SM90_TMA_STORE_IM2COL
 };
 
 // Fence for smem stores for subsequent TMA_STORE
-static void
+CUTE_HOST_DEVICE static void
 tma_store_fence() {
 #if defined(CUTE_ARCH_TMA_SM90_ENABLED)
     asm volatile ("fence.proxy.async.shared::cta;");
@@ -1119,7 +1119,7 @@ tma_store_fence() {
 }
 
 // Indicate arrival of warp issuing TMA_STORE
-static void
+CUTE_HOST_DEVICE static void
 tma_store_arrive() {
 #if defined(CUTE_ARCH_TMA_SM90_ENABLED)
     asm volatile("cp.async.bulk.commit_group;");
@@ -1130,7 +1130,7 @@ tma_store_arrive() {
 
 // Wait until at most Count committed TMA_STOREs are pending and all prior commits are complete
 template <int Count>
-static void
+CUTE_HOST_DEVICE static void
 tma_store_wait() {
 #if defined(CUTE_ARCH_TMA_SM90_ENABLED)
     asm volatile(
