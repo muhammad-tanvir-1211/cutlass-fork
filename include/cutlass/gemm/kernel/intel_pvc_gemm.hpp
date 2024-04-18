@@ -99,8 +99,8 @@ public:
   // MSVC requires the cast to fix a warning-as-error.
   static constexpr int SharedStorageSize = 0;
 
-  static constexpr uint32_t MaxThreadsPerBlock = 16;
-  // static constexpr uint32_t MaxThreadsPerBlock = CUTE_STATIC_V(cute::size(TiledMma{}));
+  static constexpr uint32_t MaxThreadsPerBlock = 64;
+  // static constexpr uint32_t MaxThreadsPerBlock = CUTE_STATIC_V(cute::get<0>(TiledMma{}) * cute::get<1>(TiledMma{}));
   static constexpr uint32_t MinBlocksPerMultiprocessor = 1;
   static constexpr int SG_SZ = DispatchPolicy::SG_SZ;
 
@@ -109,8 +109,8 @@ public:
   static constexpr int tK = get<1>(shape(typename TiledMma::LayoutA_TV{})); // cols per dpas operation per sub_group for Matrix A
 
   static constexpr int num_sg = MaxThreadsPerBlock / SG_SZ; // number of sub_groups per work group
-  static constexpr int MM = get<0>(TileShape{}) / (num_sg * tM); // A frags per sub_group
-  static constexpr int NN = get<1>(TileShape{}) / (num_sg * tN); // B frags per sub_group
+  static constexpr int MM = get<0>(TileShape{}) / tM; // A frags per sub_group
+  static constexpr int NN = get<1>(TileShape{}) / tN; // B frags per sub_group
 
   // Device side arguments
   struct Arguments {
@@ -172,9 +172,17 @@ public:
       batch_count = cute::size<3>(params.problem_shape);
     }
 
+    auto M = get<0>(params.problem_shape);
+    auto N = get<1>(params.problem_shape);
+
+    const int frags_sg_m = (M - 1) / tM + 1; // total fragments of A
+    const int frags_sg_n = (N - 1) / tN + 1; // total fragments of B
+    const int sg_m = (frags_sg_m - 1) / MM + 1; // sub_groups required to process A fragments
+    const int sg_n = (frags_sg_n - 1) / NN + 1; // sub_groups required to process B fragments
+
     return dim3(
-      cute::size(cute::ceil_div(cute::shape<0>(params.problem_shape), cute::shape<0>(TileShape{}))),
-      cute::size(cute::ceil_div(cute::shape<1>(params.problem_shape), cute::shape<1>(TileShape{}))),
+      cute::size(cute::ceil_div(sg_m, num_sg)),
+      cute::size(sg_n),
       batch_count
     );
   }
@@ -210,18 +218,15 @@ public:
     // Get the appropriate blocks for this thread block -- potential for thread block locality
     int thread_idx = int(ThreadIdxX());
     auto blk_shape = TileShape{};                                                                // (BLK_M,BLK_N,BLK_K)
-    // * calculate the total sub_groups launched
-    // * next calculate the m,n,l co-ordinates per sub_group
-    // * pass these co-ordinates along to the blk_coord_mnkl object
-    const int frags_sg_m_ = (M - 1) / tM + 1; // total fragments of A
-    const int frags_sg_n_ = (N - 1) / tN + 1; // total fragments of B
-    const int sg_m_ = (frags_sg_m_ - 1) / MM + 1; // sub_groups required to process A fragments
-    const int sg_n_ = (frags_sg_n_ - 1) / NN + 1; // sub_groups required to process B fragments
+    const int frags_sg_m = (M - 1) / tM + 1; // total fragments of A
+    const int frags_sg_n = (N - 1) / tN + 1; // total fragments of B
+    const int sg_m = (frags_sg_m - 1) / MM + 1; // sub_groups required to process A fragments
+    const int sg_n = (frags_sg_n - 1) / NN + 1; // sub_groups required to process B fragments
     using sycl::ext::oneapi::experimental::this_nd_item;
     const int item_global_id = static_cast<int>(this_nd_item<3>().get_global_linear_id());
     const int sg_global_id = item_global_id / SG_SZ;
-    const int m_coord = (sg_global_id / sg_n_) * MM * tM;
-    const int n_coord = (sg_global_id % sg_n_) * NN * tN;
+    const int m_coord = (sg_global_id / sg_n) * MM * tM;
+    const int n_coord = (sg_global_id % sg_n) * NN * tN;
     const int l_coord = BlockIdxZ();
     auto blk_coord_mnkl = make_coord(m_coord, n_coord, _, l_coord);                                        // (m,n,k,l)
 
@@ -232,14 +237,12 @@ public:
     // Compute tile residues for predication
     auto m_max_coord = M - get<0>(blk_shape) * m_coord;//size<0>(gA) * get<0>(blk_coord_mnkl);                             // M - BLK_M * m_coord
     auto n_max_coord = N - get<1>(blk_shape) * n_coord;//size<0>(gB) * get<1>(blk_coord_mnkl);                             // N - BLK_N * n_coord
-    auto k_residue   = K - get<2>(blk_shape) * (K / get<2>(blk_shape));//size<1>(gA) * size<2>(gA);                                        // K - BLK_K * k_coord_max
+    auto k_residue   = K - get<2>(blk_shape) * (K / get<2>(blk_shape));//size<1>(gA) * size<2>(gA);                        // K - BLK_K * k_coord_max
     auto residue_mnk = make_tuple(m_max_coord, n_max_coord, k_residue);
 
     // Allocate the tiled_mma and the accumulators for the (M,N) blk_shape
     TiledMma tiled_mma;
-    // Tensor accumulators = partition_fragment_C(tiled_mma, take<0,2>(sg_shape{})); // (MMA,MMA_M,MMA_N)
     Tensor accumulators = make_tensor<float>(Shape<_8, Int<MM>, Int<NN>>{});
-    // Tensor output = make_tensor<float>(make_gmem_ptr(params.epilogue.ptr_C), make_layout(Shape<_8, Int<4>, Int<2>>{}));
     clear(accumulators);
 
     auto k_tile_iter  = cute::make_coord_iterator(make_shape(K / get<2>(blk_shape))/*shape<2>(gA)*/);
