@@ -71,6 +71,7 @@ enum class KernelInputTransformType {
 //
 // Kernel schedule policies (the base class tags, one for each kernel layer file)
 //
+struct KernelSinglestage { };
 struct KernelMultistage { };
 struct KernelCpAsyncWarpSpecialized { };
 struct KernelCpAsyncWarpSpecializedPingpong { };
@@ -268,6 +269,21 @@ struct MainloopSm90ArrayTmaGmmaWarpSpecialized {
     cute::is_base_of_v<KernelPtrArrayTmaWarpSpecializedCooperative, KernelSchedule>,
     "KernelSchedule must be one of the Ptr-Array or Grouped Gemm TMA Warp Specialized Cooperative policies");
 };
+
+
+#if defined(CUTLASS_ENABLE_SYCL)
+struct MainloopIntelPVCBase {
+  constexpr static int Stages = 1;
+  using ArchTag = arch::IntelPVC;
+  using Schedule = KernelSinglestage;
+  using ClusterShape = Shape<_1,_1,_1>;
+  static constexpr int SG_SZ = 16;
+};
+
+struct MainloopIntelPVCUnpredicated : MainloopIntelPVCBase{};
+
+struct MainloopIntelPVC : MainloopIntelPVCBase{};
+#endif
 
 //////////////////////////////////////////////////////////////////////////////
 
