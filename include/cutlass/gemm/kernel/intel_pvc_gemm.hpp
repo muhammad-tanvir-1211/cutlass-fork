@@ -181,8 +181,8 @@ public:
     const int sg_n = (frags_sg_n - 1) / NN + 1; // sub_groups required to process B fragments
 
     return dim3(
-      cute::size(cute::ceil_div(sg_m, num_sg)),
-      cute::size(sg_n),
+      cute::size(sg_m),
+      cute::size(cute::ceil_div(sg_n, num_sg)),
       batch_count
     );
   }
@@ -219,15 +219,8 @@ public:
     // Get the appropriate blocks for this thread block -- potential for thread block locality
     int thread_idx = int(ThreadIdxX());
     auto blk_shape = TileShape{};                                                                // (BLK_M,BLK_N,BLK_K)
-    const int frags_sg_m = (M - 1) / tM + 1; // total fragments of A
-    const int frags_sg_n = (N - 1) / tN + 1; // total fragments of B
-    const int sg_m = (frags_sg_m - 1) / MM + 1; // sub_groups required to process A fragments
-    const int sg_n = (frags_sg_n - 1) / NN + 1; // sub_groups required to process B fragments
-    const int items_per_batch = sg_m * sg_n * SG_SZ;
-    const int item_global_id = static_cast<int>(this_nd_item<3>().get_global_linear_id() % items_per_batch);
-    const int sg_global_id = item_global_id / SG_SZ;
-    const int m_coord = (sg_global_id / sg_n) * MM * tM;
-    const int n_coord = (sg_global_id % sg_n) * NN * tN;
+    const int m_coord = BlockIdxX() * MM * tM;
+    const int n_coord = (BlockIdxY() * num_sg + thread_idx / SG_SZ) * NN * tN;
     const int l_coord = BlockIdxZ();
     auto blk_coord_mnkl = make_coord(m_coord, n_coord, _, l_coord);                                        // (m,n,k,l)
 
