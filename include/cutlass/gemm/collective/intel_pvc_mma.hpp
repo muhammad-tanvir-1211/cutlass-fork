@@ -137,7 +137,7 @@ struct CollectiveMma<
     return Params{copyA, copyB};
   }
 
-  /// Perform a threadblock-scoped matrix multiply-accumulate
+  /// Perform a subgroup-scoped matrix multiply-accumulate
   template <
     class FrgTensorD,
     class TensorA,
@@ -172,7 +172,7 @@ struct CollectiveMma<
     // Tensor to hold input data
     Tensor tAr = make_tensor<ushort>(Shape<_8, Int<4>>{});
     Tensor tBr = make_tensor<uint>(Shape<_8, Int<2>>{});
-    // Tile MMA compute thread partitions and allocate accumulators
+    // Instantiate the MMA object
     TiledMma tiled_mma;
 
     //
