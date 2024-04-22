@@ -102,15 +102,16 @@ public:
   static constexpr uint32_t MaxThreadsPerBlock = 64;
   // static constexpr uint32_t MaxThreadsPerBlock = CUTE_STATIC_V(cute::get<0>(TiledMma{}) * cute::get<1>(TiledMma{}));
   static constexpr uint32_t MinBlocksPerMultiprocessor = 1;
-  static constexpr int SG_SZ = DispatchPolicy::SG_SZ;
 
-  static constexpr int tM = get<0>(shape(typename TiledMma::LayoutA_TV{})); // rows per dpas operation per sub_group for Matrix A
-  static constexpr int tN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
-  static constexpr int tK = get<1>(shape(typename TiledMma::LayoutA_TV{})); // cols per dpas operation per sub_group for Matrix A
-
+  static constexpr int SG_SZ = CollectiveMainloop::SG_SZ; // sub_group size
   static constexpr int num_sg = MaxThreadsPerBlock / SG_SZ; // number of sub_groups per work group
-  static constexpr int MM = get<0>(TileShape{}) / tM; // A frags per sub_group
-  static constexpr int NN = get<1>(TileShape{}) / tN; // B frags per sub_group
+
+  static constexpr int tM = CollectiveMainloop::tM;
+  static constexpr int tN = CollectiveMainloop::tN;
+  static constexpr int tK = CollectiveMainloop::tK;
+
+  static constexpr int MM = CollectiveMainloop::MM;
+  static constexpr int NN = CollectiveMainloop::NN;
 
   // Device side arguments
   struct Arguments {
@@ -181,8 +182,8 @@ public:
     const int sg_n = (frags_sg_n - 1) / NN + 1; // sub_groups required to process B fragments
 
     return dim3(
-      cute::size(sg_m),
-      cute::size(cute::ceil_div(sg_n, num_sg)),
+      sg_m,
+      cute::ceil_div(sg_n, num_sg),
       batch_count
     );
   }
@@ -195,9 +196,6 @@ public:
   CUTLASS_DEVICE
   void
   operator()(Params const& params, char* smem_buf) {
-    using namespace cute;
-    using sycl::ext::oneapi::experimental::this_nd_item;
-    using X = Underscore;
 
     // Preconditions
     CUTE_STATIC_ASSERT(is_static<TileShape>::value);
@@ -216,31 +214,40 @@ public:
     static_assert(cute::rank(StrideC{}) == 3, "StrideC must be rank-3: [M, N, L]. If batch mode is not needed, set L stride to Int<0>.");
     static_assert(cute::rank(StrideD{}) == 3, "StrideD must be rank-3: [M, N, L]. If batch mode is not needed, set L stride to Int<0>.");
 
-    // Get the appropriate blocks for this thread block -- potential for thread block locality
+    // Get the appropriate blocks for this sub_group -- potential for sub_group locality
     int thread_idx = int(ThreadIdxX());
-    auto blk_shape = TileShape{};                                                                // (BLK_M,BLK_N,BLK_K)
+    auto subgroup_shape = TileShape{};                                                  // (SUB_M,SUB_N,SUB_K)
     const int m_coord = BlockIdxX() * MM * tM;
     const int n_coord = (BlockIdxY() * num_sg + thread_idx / SG_SZ) * NN * tN;
     const int l_coord = BlockIdxZ();
-    auto blk_coord_mnkl = make_coord(m_coord, n_coord, _, l_coord);                                        // (m,n,k,l)
+    auto blk_coord_mnkl = make_coord(m_coord, n_coord, _, l_coord);                     // (m,n,k,l)
 
-    Tensor tAi = make_tensor(make_inttuple_iter(m_coord, 0, l_coord), make_layout(make_shape(_1{}, Int<MM>{}, K, L), make_stride(_1{}, tM*E<0>{}, E<1>{}, E<2>{}*K*M)));
-    Tensor tBi = make_tensor(make_inttuple_iter(0, n_coord, l_coord), make_layout(make_shape(_1{}, K, Int<NN>{}, L), make_stride(_1{}, E<0>{}, tN*E<1>{}, E<2>{}*K*N)));
-    Tensor tCi = make_tensor(make_inttuple_iter(m_coord, n_coord, l_coord), make_layout(make_shape(_1{}, Int<MM>{}, Int<NN>{}, L), make_stride(_1{}, tM*E<0>{}, tN*E<1>{}, E<2>{}*M*N)));
+    Tensor tAi = make_tensor(make_inttuple_iter(m_coord, 0, l_coord), 
+                             make_layout(make_shape(_1{}, Int<MM>{}, K, L), 
+                             make_stride(_1{}, tM*E<0>{}, E<1>{}, E<2>{}*get<2>(params.mainloop.args.dA))));
+
+    Tensor tBi = make_tensor(make_inttuple_iter(0, n_coord, l_coord), 
+                             make_layout(make_shape(_1{}, K, Int<NN>{}, L), 
+                             make_stride(_1{}, E<0>{}, tN*E<1>{}, E<2>{}*get<2>(params.mainloop.args.dB))));
+
+    Tensor tCi = make_tensor(make_inttuple_iter(m_coord, n_coord, l_coord), 
+                             make_layout(make_shape(_1{}, Int<MM>{}, Int<NN>{}, L), 
+                             make_stride(_1{}, tM*E<0>{}, tN*E<1>{}, E<2>{}*get<2>(params.epilogue.dD))));
 
     // Compute tile residues for predication
-    auto m_max_coord = M - get<0>(blk_shape) * m_coord;//size<0>(gA) * get<0>(blk_coord_mnkl);                             // M - BLK_M * m_coord
-    auto n_max_coord = N - get<1>(blk_shape) * n_coord;//size<0>(gB) * get<1>(blk_coord_mnkl);                             // N - BLK_N * n_coord
-    auto k_residue   = K - get<2>(blk_shape) * (K / get<2>(blk_shape));//size<1>(gA) * size<2>(gA);                        // K - BLK_K * k_coord_max
+    auto m_max_coord = M - get<0>(subgroup_shape) * m_coord;                             // M - SUB_M * m_coord
+    auto n_max_coord = N - get<1>(subgroup_shape) * n_coord;                             // N - SUB_N * n_coord
+    auto k_residue   = K - get<2>(subgroup_shape) * (K / get<2>(subgroup_shape));        // K - SUB_K * k_coord_max
     auto residue_mnk = make_tuple(m_max_coord, n_max_coord, k_residue);
 
-    // Allocate the tiled_mma and the accumulators for the (M,N) blk_shape
+    // Allocate the tiled_mma and the accumulators for the (M,N) subgroup_shape
     TiledMma tiled_mma;
-    Tensor accumulators = make_tensor<float>(Shape<_8, Int<MM>, Int<NN>>{});
+    constexpr int VecC = (tN * tM) / SG_SZ;
+    Tensor accumulators = make_tensor<float>(Shape<Int<VecC>, Int<MM>, Int<NN>>{});
     clear(accumulators);
 
-    auto k_tile_iter  = cute::make_coord_iterator(make_shape(K / get<2>(blk_shape))/*shape<2>(gA)*/);
-    int  k_tile_count = K / get<2>(blk_shape);//size<2>(gA);
+    auto k_tile_iter  = cute::make_coord_iterator(make_shape(K / get<2>(subgroup_shape)));
+    int  k_tile_count = K / get<2>(subgroup_shape);
 
     // Perform the collective scoped MMA
     CollectiveMainloop collective_mma;
@@ -255,7 +262,7 @@ public:
       smem_buf,
       params.mainloop
     );
-    auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_SAVE>(make_tensor(params.epilogue.ptr_D, make_shape(M, N, L)));
+    auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_SAVE>(make_tensor(params.epilogue.ptr_D, make_shape(M, N, L), params.epilogue.dD));
     copy(gmem_tiled_copy_c, accumulators, tCi(_,_,_,l_coord));
 
     // Epilogue and write to gD

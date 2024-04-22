@@ -94,7 +94,7 @@ __global__ void TensorForEach(Coord<Rank> size, Params params = Params()) {
 
   Func func(params);
 
-  int64_t index = threadIdx.x + blockIdx.x * blockDim.x;
+  int64_t index = ThreadIdxX() + BlockIdxX() * BlockDimX();
   int64_t max_index = 1;
 
   CUTLASS_PRAGMA_UNROLL
@@ -107,7 +107,7 @@ __global__ void TensorForEach(Coord<Rank> size, Params params = Params()) {
     Coord<Rank> coord;
 
     detail::TensorForEachHelper<Func, Rank, Rank - 1>(func, size, coord, index); 
-    index += blockDim.x * gridDim.x;
+    index += BlockDimX() * GridDimX();
   }
 }
 
@@ -119,7 +119,7 @@ __global__ void TensorDiagonalForEach(Coord<Rank> size, Params params, int start
 
   Func func(params);
 
-  int64_t index = threadIdx.x + blockIdx.x * blockDim.x + start;
+  int64_t index = ThreadIdxX() + BlockIdxX() * BlockDimX() + start;
 
   if (index < end) {
     Coord<Rank> coord;
@@ -143,9 +143,9 @@ __global__ void BlockForEach(
 
   Func func(params);
 
-  size_t index = threadIdx.x + blockIdx.x * blockDim.x;
+  size_t index = ThreadIdxX() + BlockIdxX() * BlockDimX();
 
-  for (; index < capacity; index += blockDim.x * gridDim.x) {
+  for (; index < capacity; index += BlockDimX() * GridDimX()) {
     ReferenceFactory<Element>::get(ptr, index) = func();
   }
 }

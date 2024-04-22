@@ -39,42 +39,25 @@
 #include <cute/tensor.hpp>
 #include <random>
 
-bool identityData = false;
-bool fixedData = false;
-bool validate = false;
-float threshold = 0.01f;
+#include "cutlass/util/command_line.h"
+#include "cutlass/util/device_memory.h"
+#include "cutlass/util/packed_stride.hpp"
+#include "cutlass/util/reference/device/gemm_complex.h"
+#include "cutlass/util/reference/device/tensor_compare.h"
 
 template <typename T>
-static void fill_matrix(std::vector<T> &M, int numRows, int numCols)
+static void fill_matrix(std::vector<T> &M)
 {
-    if (identityData)
-    {
-        std::generate(std::begin(M), std::end(M), [&]
-                      { return static_cast<T>(1); });
-    }
-    else if (fixedData)
-    {
-        for (int r = 0; r < numRows; r++)
-        {
-            for (int c = 0; c < numCols; c++)
-            {
-                M[r * numCols + c] = static_cast<T>(r + c);
-            }
-        }
-    }
-    else
-    {
-        std::random_device dev;
-        std::mt19937 rng(dev());
-        std::uniform_real_distribution<float> dist(1.0, 2.0);
-        std::generate(std::begin(M), std::end(M), [&]
-                      { return static_cast<T>(dist(rng)); });
-    }
+  std::random_device dev;
+  std::mt19937 rng(dev());
+  std::uniform_real_distribution<float> dist(1.0, 2.0);
+  std::generate(std::begin(M), std::end(M), [&]
+                { return static_cast<T>(dist(rng)); });
 }
 
 template <typename T>
 static void vnni_matrix(
-    std::vector<T> &dst, const std::vector<T> &src,
+    T* dst, const T* src,
     int batch, int numRows, int numCols, int factor)
 {
     for (int b = 0; b < batch; b++) {
@@ -109,125 +92,302 @@ static void compute_reference(
     }
 }
 
-template <typename T>
-bool check_results(
-    int batch,
-    int M,
-    int N,
-    const std::vector<T>& C,
-    const std::vector<T>& C_ref)
-{
-    float err = 0.f;
-    for(int b = 0; b < batch; b++) {
-      for (int m = 0; m < M; m++) {
-          for (int n = 0; n < N; n++) {
-              auto index = (b * M + m) * N + n;
-              auto localErr = std::fabs(C[index] - C_ref[index]) /
-                              std::max(std::fabs(C[index]),
-                                      std::fabs(C_ref[index]));
-              err = std::max(localErr, err);
-              if (localErr >= threshold) {
-                  std::cerr << "Error at batch = " << b << ", m = " << m << ", n = " << n
-                            << ": (local error " << localErr << "): Wanted "
-                            << C_ref[index] << ", got " << C[index] << std::endl;
-                  return false;
-              }
-          }
-      }
-    }
-  return true;
-}
-
 using namespace cute;
 
-// The code section below describes datatype for input, output matrices and computation between
-// elements in input matrices.
-using ElementAccumulator = float;                   // <- data type of accumulator
-using ElementComputeEpilogue = float;  // <- data type of epilogue operations
-using ElementInputA = bfloat16_t;                        // <- data type of elements in input matrix A
-using ElementInputB = bfloat16_t;                        // <- data type of elements in input matrix B
-using ElementOutput = float;                        // <- data type of elements in output matrix D
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
-using TileShape = Shape<_32, _32, _16>;
+// Command line options parsing
+struct Options {
 
-using TiledMma = TiledMMA<MMA_Atom<XE_8x16x16_BF16BF16F32F32_NN>,
-        Layout<Shape<_8,_16,_1>>>;
+  bool help;
+  bool error;
 
-//// This code section describes the epilogue part of the kernel
-using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
-        ElementOutput,                                     // <- data type of output matrix
-        128 / cutlass::sizeof_bits<ElementOutput>::value,  // <- the number of elements per vectorized
-        // memory access. For a byte, it's 16
-        // elements. This becomes the vector width of
-        // math instructions in the epilogue too
-        ElementAccumulator,                                // <- data type of accumulator
-        ElementComputeEpilogue>;  // <- data type for alpha/beta in linear combination function
+  int m, n, k, l, iterations;
+  float alpha, beta;
 
-using DispatchPolicy = cutlass::gemm::MainloopIntelPVCUnpredicated;
+  Options():
+    help(false),
+    error(false),
+    m(4096), n(4096), k(4096), l(1), iterations(100),
+    alpha(1.f), beta(0.f)
+  { }
 
-template <typename Gemm_Op>
-void
-run(Gemm_Op gemm_op)
-{
-  gemm_op();
-}
+  // Parses the command line
+  void parse(int argc, char const **args) {
+    cutlass::CommandLine cmd(argc, args);
 
-void test_gemm(int m, int n, int k, int batch)
-{
-  std::cout << "M = " << m << std::endl;
-  std::cout << "N = " << n << std::endl;
-  std::cout << "K = " << k << std::endl;
-  std::cout << "Batch = " << batch << std::endl;
+    if (cmd.check_cmd_line_flag("help")) {
+      help = true;
+      return;
+    }
 
-  using TA = bfloat16_t;
-  using TB = bfloat16_t;
-  using TC = float;
-  using TI = float;
+    cmd.get_cmd_line_argument("m", m, 4096);
+    cmd.get_cmd_line_argument("n", n, 4096);
+    cmd.get_cmd_line_argument("k", k, 4096);
+    cmd.get_cmd_line_argument("l", l, 1);
+    cmd.get_cmd_line_argument("alpha", alpha, 1.f);
+    cmd.get_cmd_line_argument("beta", beta, 0.f);
+    cmd.get_cmd_line_argument("iterations", iterations, 100);
+  }
 
-  std::vector<TA> h_A(m*k*batch);
-  std::vector<TB> h_B(n*k*batch);
-  std::vector<TB> h_B_vnni(n*k*batch);
-  std::vector<TC> h_C(m*n*batch, static_cast<TC>(0));
-  std::vector<TC> h_D(m*n*batch, static_cast<TC>(0));
+  /// Prints the usage statement.
+  std::ostream & print_usage(std::ostream &out) const {
 
-  fill_matrix(h_A, m * batch, k);
-  fill_matrix(h_B, k * batch, n);
+    out << "PVC GEMM Example\n\n"
+      << "Options:\n\n"
+      << "  --help                      If specified, displays this usage statement\n\n"
+      << "  --m=<int>                   Sets the M extent of the GEMM\n"
+      << "  --n=<int>                   Sets the N extent of the GEMM\n"
+      << "  --k=<int>                   Sets the K extent of the GEMM\n"
+      << "  --l=<int>                   Sets the L extent (batch count) of the GEMM\n"
+      << "  --alpha=<s32>               Epilogue scalar alpha\n"
+      << "  --beta=<s32>                Epilogue scalar beta\n\n"
+      << "  --iterations=<int>          Iterations\n\n";
 
-  vnni_matrix(h_B_vnni, h_B, batch, k, n, 2);
+    return out;
+  }
+};
 
-  auto d_A = syclcompat::malloc<TA>(m*k*batch);
-  auto d_B = syclcompat::malloc<TB>(n*k*batch);
-  auto d_C = syclcompat::malloc<TC>(m*n*batch);
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
-  syclcompat::memcpy<TA>(d_A, h_A.data(), h_A.size());
-  syclcompat::memcpy<TB>(d_B, h_B_vnni.data(), h_B_vnni.size());
-  syclcompat::memcpy<TC>(d_C, h_C.data(), h_C.size());
+template <
+  class Gemm
+>
+struct ExampleRunner {
 
-  TI alpha = 1.0;
-  TI beta  = 0.0;
+  using StrideA = typename Gemm::GemmKernel::StrideA;
+  using StrideB = typename Gemm::GemmKernel::StrideB;
+  using StrideC = typename Gemm::GemmKernel::StrideC;
+  using StrideD = typename Gemm::GemmKernel::StrideD;
 
-  double tflops = (2.0*m*n*k*batch) * 1e-12;
+  using LayoutA = typename Gemm::LayoutA;
+  using LayoutB = typename Gemm::LayoutB;
+  using LayoutC = typename Gemm::LayoutC;
+  using LayoutD = typename Gemm::LayoutD;
 
-  const int timing_iterations = 10;
-  GPU_Clock timer;
+  using ElementA = typename Gemm::ElementA;
+  using ElementB = typename Gemm::ElementB;
+  using ElementAcc = typename Gemm::ElementAccumulator;
+
+  using CollectiveEpilogue = typename Gemm::CollectiveEpilogue;
+  using ElementC = typename Gemm::ElementC;
+  using ElementOutput = typename CollectiveEpilogue::ElementOutput;
+  using ElementCompute = typename CollectiveEpilogue::ElementCompute;
+  using ElementAccumulator = typename CollectiveEpilogue::ElementAccumulator;
+
+  using ProblemShapeType = typename Gemm::GemmKernel::ProblemShape;
 
   //
-  // CuTe
+  // Data members
   //
 
-  using namespace cute;
+  /// Initialization
+  StrideA stride_A;
+  StrideB stride_B;
+  StrideC stride_C;
+  StrideD stride_D;
 
-  // Define strides (mixed)
-  auto dA = make_stride(Int<1>{}, k, Int<1>{});
-  auto dB = make_stride(Int<1>{}, n, Int<1>{});
-  auto dC = make_stride(Int<1>{}, n, Int<1>{});
+  cutlass::DeviceAllocation<ElementA> block_A;
+  cutlass::DeviceAllocation<ElementB> block_B;
+  cutlass::DeviceAllocation<ElementB> block_B_vnni;
+  cutlass::DeviceAllocation<ElementC> block_C;
+  cutlass::DeviceAllocation<ElementOutput> block_D;
+  cutlass::DeviceAllocation<ElementOutput> block_ref_D;
+
+  //
+  // Methods
+  //
+
+  bool verify(const ProblemShapeType& problem_size, ElementCompute alpha, ElementCompute beta) {
+    auto [M, N, K, L] = problem_size;
+
+    cutlass::TensorRef ref_A(block_A.get(), LayoutA::packed({M, K}));
+    cutlass::TensorRef ref_B(block_B.get(), LayoutB::packed({K, N}));
+    cutlass::TensorRef ref_C(block_C.get(), LayoutC::packed({M, N}));
+    cutlass::TensorRef ref_D(block_ref_D.get(), LayoutD::packed({M, N}));
+
+    cutlass::reference::device::GemmComplex(
+          {M, N, K},
+          alpha,
+          ref_A,
+          cutlass::ComplexTransform::kNone,
+          ref_B,
+          cutlass::ComplexTransform::kNone,
+          beta,
+          ref_C,
+          ref_D,
+          ElementAccumulator(0),
+          L,     // batch_count
+          M * K, // batch_stride_A
+          K * N, // batch_stride_B
+          M * N, // batch_stride_C
+          M * N  // batch_stride_D
+        );
+
+    syclcompat::wait();
+
+    // Check if output from CUTLASS kernel and reference kernel are relatively equal or not
+    // need to set a larger error margin for comparison to succeed
+    bool passed = cutlass::reference::device::BlockCompareRelativelyEqual(block_ref_D.get(), block_D.get(), block_D.size(), 0.5f, 0.5f);
+
+    return passed;
+  }
+
+  /// Initialize operands to be used in the GEMM and reference GEMM
+  void initialize(const ProblemShapeType& problem_size) {
+    auto problem_shape_MNKL = cute::append<4>(problem_size, 1);
+    auto [M, N, K, L] = problem_shape_MNKL;
+
+    stride_A = cutlass::make_cute_packed_stride(StrideA{}, cute::make_shape(M, K, L));
+    stride_B = cutlass::make_cute_packed_stride(StrideB{}, cute::make_shape(N, K, L));
+    stride_C = cutlass::make_cute_packed_stride(StrideC{}, cute::make_shape(M, N, L));
+    stride_D = cutlass::make_cute_packed_stride(StrideD{}, cute::make_shape(M, N, L));
+
+    block_A.reset(M * K * L);
+    block_B.reset(K * N * L);
+    block_B_vnni.reset(K * N * L);
+    block_C.reset(M * N * L);
+    block_D.reset(M * N * L);
+    block_ref_D.reset(M * N * L);
+
+    // TODO: Enable initialization on device directly once RNG is 
+    // available through SYCL.
+    std::vector<ElementA> a(K * M * L);
+    std::vector<ElementB> b(K * N * L);
+    std::vector<ElementB> b_vnni(b.size());
+    std::vector<ElementC> c(M * N * L);
+    std::vector<ElementC> d(M * N * L, ElementC{0});
+
+    fill_matrix(a);
+    fill_matrix(b);
+    fill_matrix(c);
+    vnni_matrix(b_vnni.data(), b.data(), L, K, N, 2);
+
+    syclcompat::memcpy(block_A.get(), a.data(), a.size() * sizeof(ElementA));
+    syclcompat::memcpy(block_B.get(), b.data(), b.size() * sizeof(ElementB));
+    syclcompat::memcpy(block_B_vnni.get(), b_vnni.data(), b.size() * sizeof(ElementB));
+    syclcompat::memcpy(block_C.get(), c.data(), c.size() * sizeof(ElementC));
+    syclcompat::memcpy(block_D.get(), d.data(), d.size() * sizeof(ElementC));
+  }
+
+  void run(const Options& options, const cutlass::KernelHardwareInfo& hw_info) {
+    ProblemShapeType problem_size = ProblemShapeType{options.m, options.n, options.k, options.l};
+
+    initialize(problem_size);
+
+    typename Gemm::GemmKernel::Arguments arguments{
+      cutlass::gemm::GemmUniversalMode::kGemm,
+      problem_size,
+      {block_A.get(), stride_A, block_B_vnni.get(), stride_B},
+      {{options.alpha, options.beta}, block_C.get(), stride_C, block_D.get(), stride_D},
+      hw_info
+    };
+
+    Gemm gemm_op;
+
+    size_t workspace_size = Gemm::get_workspace_size(arguments);
+    cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
+
+    gemm_op.can_implement(arguments);
+
+    gemm_op.initialize(arguments, workspace.get());
+
+    // Run the GEMM
+    gemm_op.run();
+
+    syclcompat::wait();
+
+    // Verify that the result is correct
+    bool passed = verify(problem_size, options.alpha, options.beta);
+    std::cout << "PVC GEMM Example : " << (passed ? "Passed" : "Failed") << std::endl;
+
+    if (passed && options.iterations > 0) {
+      GPU_Clock timer;
+      timer.start();
+      for (int i = 0; i < options.iterations; ++i) {
+        gemm_op.run();
+      }
+      syclcompat::wait();
+
+      float cute_time = timer.seconds() / options.iterations;
+      double tflops = (2.0 * options.m * options.n * options.k * options.l) * 1e-12;
+      printf("PVC GEMM Performance:     [%4.3f]TFlop/s  (%6.4f)ms\n", tflops / cute_time, cute_time*1000);
+    }
+
+    return;
+  }
+
+};
+
+int main(int argc, const char** argv)
+{
+  //
+  // Parse options
+  //
+
+  Options options;
+
+  options.parse(argc, argv);
+
+  if (options.help) {
+    options.print_usage(std::cout) << std::endl;
+    return 0;
+  }
+
+  if (options.error) {
+    std::cerr << "Aborting execution." << std::endl;
+    return -1;
+  }
+
+  //
+  // Run examples
+  //
+
+  // The KernelHardwareInfo struct holds the number of EUs on the GPU with a given device ID. This
+  // information is used by the underlying kernel.
+  cutlass::KernelHardwareInfo hw_info;
+
+  // Change device_id to another value if you are running on a machine with multiple GPUs and wish
+  // to use a GPU other than that with device ID 0.
+  hw_info.sm_count = cutlass::KernelHardwareInfo::query_device_multiprocessor_count(hw_info.device_id);
+
+  bool passed;
+
+  // The code section below describes datatype for input, output matrices and computation between
+  // elements in input matrices.
+  using ElementAccumulator = float;                   // <- data type of accumulator
+  using ElementComputeEpilogue = float;  // <- data type of epilogue operations
+  using ElementInputA = bfloat16_t;                        // <- data type of elements in input matrix A
+  using ElementInputB = bfloat16_t;                        // <- data type of elements in input matrix B
+  using ElementOutput = float;                        // <- data type of elements in output matrix D
+
+  using LayoutA = cutlass::layout::RowMajor;
+  using LayoutB = cutlass::layout::RowMajor;
+  using LayoutC = cutlass::layout::RowMajor;
+  using LayoutD = cutlass::layout::RowMajor;
 
   using GmemTiledCopyA = XE_2D_LOAD;
   using GmemTiledCopyB = XE_2D_LOAD;
 
+  using TileShape = Shape<_32, _32, _16>;
+
+  using TiledMma = TiledMMA<MMA_Atom<XE_8x16x16_BF16BF16F32F32_NN>,
+          Layout<Shape<_8,_16,_1>>>;
+
+  using DispatchPolicy = cutlass::gemm::MainloopIntelPVCUnpredicated;
+
+  using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
+          ElementOutput,                                     // <- data type of output matrix
+          128 / cutlass::sizeof_bits<ElementOutput>::value,  // <- the number of elements per vectorized
+          // memory access. For a byte, it's 16
+          // elements. This becomes the vector width of
+          // math instructions in the epilogue too
+          ElementAccumulator,                                // <- data type of accumulator
+          ElementComputeEpilogue>;  // <- data type for alpha/beta in linear combination function
+
   using CollectiveEpilogue = cutlass::epilogue::collective::DefaultEpilogue<
-          decltype(dC),
-          decltype(dC),
+          cutlass::gemm::TagToStrideC_t<LayoutC>,
+          cutlass::gemm::TagToStrideC_t<LayoutD>,
           EpilogueOp,
           cutlass::gemm::EpilogueDefault>;
 
@@ -236,9 +396,9 @@ void test_gemm(int m, int n, int k, int batch)
           DispatchPolicy,
           TileShape,
           ElementInputA,
-          decltype(dA),
+          cutlass::gemm::TagToStrideA_t<LayoutA>,
           ElementInputB,
-          decltype(dB),
+          cutlass::gemm::TagToStrideB_t<LayoutB>,
           TiledMma,
           GmemTiledCopyA, void, void, cute::identity,  // A
           GmemTiledCopyB, void, void, cute::identity   // B
@@ -252,91 +412,9 @@ void test_gemm(int m, int n, int k, int batch)
 
   using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
 
-  using ProblemShapeType = typename Gemm::GemmKernel::ProblemShape;
+  ExampleRunner<Gemm> runner;
 
-  ProblemShapeType cute_problem_size = ProblemShapeType{m, n, k, batch};
-
-  // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
-  // instantiated CUTLASS kernel
-  typename Gemm::Arguments arguments{
-          cutlass::gemm::GemmUniversalMode::kGemm,
-          cute_problem_size,  // <- problem size of matrix multiplication
-          {  d_A, dA, d_B, dB },
-          {
-                  { alpha, beta },
-                  d_C, dC, d_C, dC
-          }
-  };
-
-  // Using the arguments, query for extra workspace required for matrix multiplication computation
-  size_t workspace_size = Gemm::get_workspace_size(arguments);
-
-  // Allocate workspace memory
-  auto workspace = syclcompat::malloc<TA>(workspace_size);
-
-  // Instantiate CUTLASS kernel depending on templates
-  Gemm gemm_op;
-
-  // Check the problem size is supported or not
-  gemm_op.can_implement(arguments);
-
-  // Initialize CUTLASS kernel with arguments and workspace pointer
-  gemm_op.initialize(arguments, workspace);
-
-  // Run once (and check)
-  run(gemm_op);
-
-  syclcompat::wait();
-
-  syclcompat::memcpy<TC>(h_C.data(), d_C, h_C.size());
-
-  if(validate) {
-    printf("Computing Reference\n");
-    compute_reference(h_D, h_A, h_B, batch, m, n, k);
-    if(!check_results(batch, m, n, h_C, h_D)) {
-      printf("Incorrect output\n");
-      syclcompat::free(reinterpret_cast<void*>(d_A));
-      syclcompat::free(reinterpret_cast<void*>(d_B));
-      syclcompat::free(reinterpret_cast<void*>(d_C));
-      return;
-    }
-    printf("Correct output\n");
-  }
-
-  // Timing iterations
-  timer.start();
-  for (int i = 0; i < timing_iterations; ++i) {
-    run(gemm_op);
-  }
-  syclcompat::wait();
-  //CUTE_CHECK_LAST();
-  double cute_time = timer.seconds() / timing_iterations;
-  printf("CUTLASS_GEMM:     [%4.3f]TFlop/s  (%6.4f)ms\n", tflops / cute_time, cute_time*1000);
-
-  syclcompat::free(reinterpret_cast<void*>(d_A));
-  syclcompat::free(reinterpret_cast<void*>(d_B));
-  syclcompat::free(reinterpret_cast<void*>(d_C));
-}
-
-int main(int argc, char** argv)
-{
-  int m = 64;
-  if (argc >= 2)
-    sscanf(argv[1], "%d", &m);
-
-  int n = 64;
-  if (argc >= 3)
-    sscanf(argv[2], "%d", &n);
-
-  int k = 64;
-  if (argc >= 4)
-    sscanf(argv[3], "%d", &k);
-
-  int batch = 1;
-  if (argc >= 5)
-    sscanf(argv[4], "%d", &batch);
-
-  test_gemm(m, n, k, batch);
+  runner.run(options, hw_info);
 
   return 0;
 }

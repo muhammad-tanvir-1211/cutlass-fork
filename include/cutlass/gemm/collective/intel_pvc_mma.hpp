@@ -98,6 +98,15 @@ struct CollectiveMma<
   using TransformB = TransformB_;
   using ArchTag = typename DispatchPolicy::ArchTag;
 
+  static constexpr int SG_SZ = DispatchPolicy::SG_SZ;
+  
+  static constexpr int tM = get<0>(shape(typename TiledMma::LayoutA_TV{})); // rows per dpas operation per sub_group for Matrix A
+  static constexpr int tN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
+  static constexpr int tK = get<1>(shape(typename TiledMma::LayoutA_TV{})); // cols per dpas operation per sub_group for Matrix A
+
+  static constexpr int MM = get<0>(TileShape{}) / tM; // A frags per sub_group
+  static constexpr int NN = get<1>(TileShape{}) / tN; // B frags per sub_group
+
   // Host side kernel arguments
   struct Arguments {
     ElementA const* ptr_A;
@@ -113,6 +122,8 @@ struct CollectiveMma<
                                 repeat_like(StrideB{}, int32_t(0)), StrideB{})));
     XE_Copy_A gmem_tiled_copy_a;
     XE_Copy_B gmem_tiled_copy_b;
+
+    Arguments args;
   };
 
   //
@@ -130,11 +141,11 @@ struct CollectiveMma<
     auto [M,N,K,L] = problem_shape_MNKL;
 
     Tensor tensorA = make_tensor(args.ptr_A, make_layout(make_shape(M,K,L), args.dA));
-    Tensor tensorB = make_tensor(args.ptr_B, make_layout(make_shape(K,N,L), args.dB));
+    Tensor tensorB = make_tensor(args.ptr_B, make_layout(make_shape(N,K,L), args.dB));
 
     typename Params::XE_Copy_A copyA = make_xe_2d_copy<GmemTiledCopyA>(tensorA);
     typename Params::XE_Copy_B copyB = make_xe_2d_copy<GmemTiledCopyB>(tensorB);
-    return Params{copyA, copyB};
+    return Params{copyA, copyB, args};
   }
 
   /// Perform a subgroup-scoped matrix multiply-accumulate
@@ -158,8 +169,6 @@ struct CollectiveMma<
       char *smem_buf,
       Params const& mainloop) 
   {
-    using namespace cute;
-
     (void)residue_mnk;
     (void)thread_idx;
     (void)smem_buf;
@@ -169,16 +178,18 @@ struct CollectiveMma<
     static_assert(is_tuple<typename TensorB::engine_type::iterator::value_type>::value, "B tensor must be tuple iterators.");
     static_assert(is_rmem<FrgTensorC>::value, "C tensor must be rmem resident.");
 
+    constexpr int VecA = (tM * tK) / SG_SZ;
+    constexpr int VecB = (tN * tK) / SG_SZ / (sizeof(uint) / sizeof(ushort));
     // Tensor to hold input data
-    Tensor tAr = make_tensor<ushort>(Shape<_8, Int<4>>{});
-    Tensor tBr = make_tensor<uint>(Shape<_8, Int<2>>{});
+    Tensor tAr = make_tensor<ushort>(Shape<Int<VecA>, Int<MM>>{});
+    Tensor tBr = make_tensor<uint>(Shape<Int<VecB>, Int<NN>>{});
     // Instantiate the MMA object
     TiledMma tiled_mma;
 
     //
     // Mainloop
     //
-   for (int k_tile = 0, k = 0; k_tile < k_tile_count; ++k_tile, k += get<2>(TileShape{}))
+   for (int k_tile = 0, k = 0; k_tile < k_tile_count; ++k_tile, k += tK)
    {
      // Copy gmem to rmem for the first k_tile
      copy(mainloop.gmem_tiled_copy_a, gA(_,_,k), tAr);
@@ -244,6 +255,15 @@ struct CollectiveMma<
   using TransformB = TransformB_;
   using ArchTag = typename DispatchPolicy::ArchTag;
 
+  static constexpr int SG_SZ = DispatchPolicy::SG_SZ;
+  
+  static constexpr int tM = get<0>(shape(typename TiledMma::LayoutA_TV{})); // rows per dpas operation per sub_group for Matrix A
+  static constexpr int tN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
+  static constexpr int tK = get<1>(shape(typename TiledMma::LayoutA_TV{})); // cols per dpas operation per sub_group for Matrix A
+
+  static constexpr int MM = get<0>(TileShape{}) / tM; // A frags per sub_group
+  static constexpr int NN = get<1>(TileShape{}) / tN; // B frags per sub_group
+
   struct Arguments {
     ElementA const* ptr_A;
     StrideA dA;
@@ -258,6 +278,8 @@ struct CollectiveMma<
                                 repeat_like(StrideB{}, int32_t(0)), StrideB{})));
     XE_Copy_A gmem_tiled_copy_a;
     XE_Copy_B gmem_tiled_copy_b;
+
+    Arguments args;
   };
 
   //
@@ -279,10 +301,10 @@ struct CollectiveMma<
 
     typename Params::XE_Copy_A copyA = make_xe_2d_copy<GmemTiledCopyA>(tensorA);
     typename Params::XE_Copy_B copyB = make_xe_2d_copy<GmemTiledCopyB>(tensorB);
-    return Params{copyA, copyB};
+    return Params{copyA, copyB, args};
   }
 
-  /// Perform a threadblock-scoped matrix multiply-accumulate
+  /// Perform a subgroup-scoped matrix multiply-accumulate
   template <
     class FrgTensorD,
     class TensorA,
@@ -303,8 +325,6 @@ struct CollectiveMma<
       char *smem_buf,
       Params const& mainloop) 
   {
-//    using namespace cute;
-//
     // static_assert(is_rmem<FrgTensorD>::value, "D tensor must be rmem resident.");
     // static_assert(is_tuple<typename TensorA::engine_type::iterator::value_type>::value, "A tensor must be tuple iterators.");
     // static_assert(is_tuple<typename TensorB::engine_type::iterator::value_type>::value, "B tensor must be tuple iterators.");

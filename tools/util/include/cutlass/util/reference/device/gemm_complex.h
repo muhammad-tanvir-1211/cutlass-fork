@@ -102,16 +102,16 @@ __global__ void GemmComplex(
   ConvertOp convert_op;
   InnerProductOp inner_product_op;
   
-  int row_block = (blockIdx.x * blockDim.x + threadIdx.x) * kMblock;
-  int col_block = (blockIdx.y * blockDim.y + threadIdx.y) * kNblock; 
-  int batch_idx = blockIdx.z;
+  int row_block = (BlockIdxX() * BlockDimX() + ThreadIdxX()) * kMblock;
+  int col_block = (BlockIdxY() * BlockDimY() + ThreadIdxY()) * kNblock; 
+  int batch_idx = BlockIdxZ();
 
   tensor_a.add_pointer_offset(batch_idx * batch_stride_A);
   tensor_b.add_pointer_offset(batch_idx * batch_stride_B);
   tensor_c.add_pointer_offset(batch_idx * batch_stride_C);
   tensor_d.add_pointer_offset(batch_idx * batch_stride_D);
 
-  for (; batch_idx < batch_count; batch_idx += gridDim.z) {
+  for (; batch_idx < batch_count; batch_idx += GridDimZ()) {
 
     // Compute matrix product using blocks
     ComputeType accum[kMblock][kNblock];
@@ -171,10 +171,10 @@ __global__ void GemmComplex(
       }
     }
 
-    tensor_a.add_pointer_offset(batch_stride_A * gridDim.z);
-    tensor_b.add_pointer_offset(batch_stride_B * gridDim.z);
-    tensor_c.add_pointer_offset(batch_stride_C * gridDim.z);
-    tensor_d.add_pointer_offset(batch_stride_D * gridDim.z);
+    tensor_a.add_pointer_offset(batch_stride_A * GridDimZ());
+    tensor_b.add_pointer_offset(batch_stride_B * GridDimZ());
+    tensor_c.add_pointer_offset(batch_stride_C * GridDimZ());
+    tensor_d.add_pointer_offset(batch_stride_D * GridDimZ());
 
   } // for (batch_idx)
 }
@@ -236,6 +236,42 @@ void GemmComplex(
   );
 
   if (grid.y <= std::numeric_limits<uint16_t>::max()) {
+#if defined(CUTLASS_ENABLE_SYCL)
+  const auto sycl_block = syclcompat::dim3(block.x, block.y, block.z);
+  const auto sycl_grid = syclcompat::dim3(grid.x, grid.y, grid.z);
+
+  syclcompat::launch<kernel::GemmComplex<
+                      ElementA,
+                      LayoutA,
+                      ElementB,
+                      LayoutB,
+                      ElementC,
+                      LayoutC,
+                      ScalarType,
+                      ComputeType,
+                      ElementD,
+                      ConvertOp,
+                      InnerProductOp,
+                      kMblock,
+                      kNblock
+                    >>(sycl_grid, sycl_block, 
+                        problem_size,
+                        alpha,
+                        tensor_a,
+                        transform_a,
+                        tensor_b,
+                        transform_b,
+                        beta,
+                        tensor_c,
+                        tensor_d,
+                        initial_accum,
+                        batch_count,
+                        batch_stride_A,
+                        batch_stride_B,
+                        batch_stride_C,
+                        batch_stride_D
+                    );
+#else
     kernel::GemmComplex<
       ElementA,
       LayoutA,
@@ -267,6 +303,7 @@ void GemmComplex(
       batch_stride_C,
       batch_stride_D
     );
+#endif
   } else {
     // Using bigger thread tile size
     int const kBigMblock = 4;
@@ -274,11 +311,47 @@ void GemmComplex(
 
     dim3 Bigblock(16, 8);
     dim3 Biggrid(
-      (problem_size.m() + block.x * kBigMblock - 1) / (block.x * kBigMblock),
-      (problem_size.n() + block.y * kBigNblock - 1) / (block.y * kBigNblock),
+      (problem_size.m() + Bigblock.x * kBigMblock - 1) / (Bigblock.x * kBigMblock),
+      (problem_size.n() + Bigblock.y * kBigNblock - 1) / (Bigblock.y * kBigNblock),
       batch_count % std::numeric_limits<uint16_t>::max()
     );
 
+#if defined (CUTLASS_ENABLE_SYCL)
+  const auto sycl_block = syclcompat::dim3(Bigblock.x, Bigblock.y, Bigblock.z);
+  const auto sycl_grid = syclcompat::dim3(Biggrid.x, Biggrid.y, Biggrid.z);
+
+  syclcompat::launch<kernel::GemmComplex<
+                      ElementA,
+                      LayoutA,
+                      ElementB,
+                      LayoutB,
+                      ElementC,
+                      LayoutC,
+                      ScalarType,
+                      ComputeType,
+                      ElementD,
+                      ConvertOp,
+                      InnerProductOp,
+                      kBigMblock,
+                      kBigNblock
+                    >>(sycl_grid, sycl_block, 
+                        problem_size,
+                        alpha,
+                        tensor_a,
+                        transform_a,
+                        tensor_b,
+                        transform_b,
+                        beta,
+                        tensor_c,
+                        tensor_d,
+                        initial_accum,
+                        batch_count,
+                        batch_stride_A,
+                        batch_stride_B,
+                        batch_stride_C,
+                        batch_stride_D
+                    );
+#else
     kernel::GemmComplex<
       ElementA,
       LayoutA,
@@ -310,6 +383,7 @@ void GemmComplex(
       batch_stride_C,
       batch_stride_D
     );
+#endif
   }
 }
 
