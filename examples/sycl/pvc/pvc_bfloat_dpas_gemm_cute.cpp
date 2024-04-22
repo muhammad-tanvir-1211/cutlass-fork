@@ -45,7 +45,7 @@ bool validate = false;
 float threshold = 0.01f;
 
 template <typename T>
-static void fill_matrix(std::vector<T> &M, size_t numRows, size_t numCols)
+static void fill_matrix(std::vector<T> &M, int numRows, int numCols)
 {
     if (identityData)
     {
@@ -75,15 +75,17 @@ static void fill_matrix(std::vector<T> &M, size_t numRows, size_t numCols)
 template <typename T>
 static void vnni_matrix(
     std::vector<T> &dst, const std::vector<T> &src,
-    size_t numRows, size_t numCols, size_t factor)
+    int batch, int numRows, int numCols, int factor)
 {
-    for (size_t r = 0; r < numRows / factor; r++) {
-        for (size_t c = 0; c < numCols; c++) {
-            for (size_t k = 0; k < factor; k++) {
-                dst[r * numCols * factor + c * factor + k] =
-                    src[(r * factor + k) * numCols + c];
-            }
-        }
+    for (int b = 0; b < batch; b++) {
+      for (int r = 0; r < numRows / factor; r++) {
+          for (int c = 0; c < numCols; c++) {
+              for (int k = 0; k < factor; k++) {
+                  dst[((b * (numRows / factor) + r) * numCols + c) * factor + k] =
+                      src[((b * (numRows / factor) + r) * factor + k) * numCols + c];
+              }
+          }
+      }
     }
 }
 
@@ -91,42 +93,47 @@ template <typename DstT, typename SrcT>
 static void compute_reference(
     std::vector<DstT>& C,
     const std::vector<SrcT>& A, const std::vector<SrcT>& B,
-    size_t M, size_t N, size_t K)
+    int batch, int M, int N, int K)
 {
-    for (size_t m = 0; m < M; m++) {
-        for (size_t n = 0; n < N; n++) {
-            DstT sum = 0;
-            for (size_t k = 0; k < K; k++) {
-                sum = std::fma(static_cast<DstT>(A[m * K + k]),
-                               static_cast<DstT>(B[k * N + n]), sum);
-            }
-            C[m * N + n] = sum;
-        }
+    for (int b = 0; b < batch; b++) {
+      for (int m = 0; m < M; m++) {
+          for (int n = 0; n < N; n++) {
+              DstT sum = 0;
+              for (int k = 0; k < K; k++) {
+                  sum = std::fma(static_cast<DstT>(A[(b * M + m) * K + k]),
+                                static_cast<DstT>(B[(b * K + k) * N + n]), sum);
+              }
+              C[(b * M + m) * N + n] = sum;
+          }
+      }
     }
 }
 
 template <typename T>
 bool check_results(
-    size_t M,
-    size_t N,
+    int batch,
+    int M,
+    int N,
     const std::vector<T>& C,
     const std::vector<T>& C_ref)
 {
     float err = 0.f;
-    for (size_t m = 0; m < M; m++) {
-        for (size_t n = 0; n < N; n++) {
-            auto index = m * N + n;
-            auto localErr = std::fabs(C[index] - C_ref[index]) /
-                            std::max(std::fabs(C[index]),
-                                    std::fabs(C_ref[index]));
-            err = std::max(localErr, err);
-            if (localErr >= threshold) {
-                std::cerr << "Error at m = " << m << ", n = " << n
-                          << ": (local error " << localErr << "): Wanted "
-                          << C_ref[index] << ", got " << C[index] << std::endl;
-                // return false;
-            }
-        }
+    for(int b = 0; b < batch; b++) {
+      for (int m = 0; m < M; m++) {
+          for (int n = 0; n < N; n++) {
+              auto index = (b * M + m) * N + n;
+              auto localErr = std::fabs(C[index] - C_ref[index]) /
+                              std::max(std::fabs(C[index]),
+                                      std::fabs(C_ref[index]));
+              err = std::max(localErr, err);
+              if (localErr >= threshold) {
+                  std::cerr << "Error at batch = " << b << ", m = " << m << ", n = " << n
+                            << ": (local error " << localErr << "): Wanted "
+                            << C_ref[index] << ", got " << C[index] << std::endl;
+                  return false;
+              }
+          }
+      }
     }
   return true;
 }
@@ -165,31 +172,32 @@ run(Gemm_Op gemm_op)
   gemm_op();
 }
 
-void test_gemm(int m, int n, int k)
+void test_gemm(int m, int n, int k, int batch)
 {
   std::cout << "M = " << m << std::endl;
   std::cout << "N = " << n << std::endl;
   std::cout << "K = " << k << std::endl;
+  std::cout << "Batch = " << batch << std::endl;
 
   using TA = bfloat16_t;
   using TB = bfloat16_t;
   using TC = float;
   using TI = float;
 
-  std::vector<TA> h_A(m*k);
-  std::vector<TB> h_B(n*k);
-  std::vector<TB> h_B_vnni(n*k);
-  std::vector<TC> h_C(m*n, static_cast<TC>(0));
-  std::vector<TC> h_D(m*n, static_cast<TC>(0));
+  std::vector<TA> h_A(m*k*batch);
+  std::vector<TB> h_B(n*k*batch);
+  std::vector<TB> h_B_vnni(n*k*batch);
+  std::vector<TC> h_C(m*n*batch, static_cast<TC>(0));
+  std::vector<TC> h_D(m*n*batch, static_cast<TC>(0));
 
-  fill_matrix(h_A, m, k);
-  fill_matrix(h_B, k, n);
+  fill_matrix(h_A, m * batch, k);
+  fill_matrix(h_B, k * batch, n);
 
-  vnni_matrix(h_B_vnni, h_B, k, n, 2);
+  vnni_matrix(h_B_vnni, h_B, batch, k, n, 2);
 
-  auto d_A = syclcompat::malloc<TA>(m*k);
-  auto d_B = syclcompat::malloc<TB>(n*k);
-  auto d_C = syclcompat::malloc<TC>(m*n);
+  auto d_A = syclcompat::malloc<TA>(m*k*batch);
+  auto d_B = syclcompat::malloc<TB>(n*k*batch);
+  auto d_C = syclcompat::malloc<TC>(m*n*batch);
 
   syclcompat::memcpy<TA>(d_A, h_A.data(), h_A.size());
   syclcompat::memcpy<TB>(d_B, h_B_vnni.data(), h_B_vnni.size());
@@ -198,7 +206,7 @@ void test_gemm(int m, int n, int k)
   TI alpha = 1.0;
   TI beta  = 0.0;
 
-  double tflops = (2.0*m*n*k) * 1e-12;
+  double tflops = (2.0*m*n*k*batch) * 1e-12;
 
   const int timing_iterations = 10;
   GPU_Clock timer;
@@ -246,7 +254,7 @@ void test_gemm(int m, int n, int k)
 
   using ProblemShapeType = typename Gemm::GemmKernel::ProblemShape;
 
-  ProblemShapeType cute_problem_size = ProblemShapeType{m, n, k, 1};
+  ProblemShapeType cute_problem_size = ProblemShapeType{m, n, k, batch};
 
   // Create a tuple of gemm kernel arguments. This is later passed as arguments to launch
   // instantiated CUTLASS kernel
@@ -281,12 +289,11 @@ void test_gemm(int m, int n, int k)
   syclcompat::wait();
 
   syclcompat::memcpy<TC>(h_C.data(), d_C, h_C.size());
-  syclcompat::wait();
 
   if(validate) {
     printf("Computing Reference\n");
-    compute_reference(h_D, h_A, h_B, m, n, k);
-    if(!check_results(m, n, h_C, h_D)) {
+    compute_reference(h_D, h_A, h_B, batch, m, n, k);
+    if(!check_results(batch, m, n, h_C, h_D)) {
       printf("Incorrect output\n");
       syclcompat::free(reinterpret_cast<void*>(d_A));
       syclcompat::free(reinterpret_cast<void*>(d_B));
@@ -306,7 +313,6 @@ void test_gemm(int m, int n, int k)
   double cute_time = timer.seconds() / timing_iterations;
   printf("CUTLASS_GEMM:     [%4.3f]TFlop/s  (%6.4f)ms\n", tflops / cute_time, cute_time*1000);
 
-  syclcompat::wait();
   syclcompat::free(reinterpret_cast<void*>(d_A));
   syclcompat::free(reinterpret_cast<void*>(d_B));
   syclcompat::free(reinterpret_cast<void*>(d_C));
@@ -326,7 +332,11 @@ int main(int argc, char** argv)
   if (argc >= 4)
     sscanf(argv[3], "%d", &k);
 
-  test_gemm(m, n, k);
+  int batch = 1;
+  if (argc >= 5)
+    sscanf(argv[4], "%d", &batch);
+
+  test_gemm(m, n, k, batch);
 
   return 0;
 }

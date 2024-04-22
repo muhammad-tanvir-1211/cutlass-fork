@@ -63,8 +63,8 @@ namespace cute
             int H = size<0>(traits.tensor);
             // int W = size<1>(traits.tensor) * sizeof(typename decltype(traits.tensor)::engine_type::value_type);
             int W = size<1>(traits.tensor) * sizeof(typename TD::value_type); //TODO: inconsistent to give the size in elements but use vector for copy
-            auto [y, x] = src.data().coord_;
-            XE_2D_LOAD::copy(traits.tensor.data(), W, H, W, int2_{static_cast<int>(x), static_cast<int>(y)}, &*dst.data());
+            auto [y, x, z] = src.data().coord_;
+            XE_2D_LOAD::copy(traits.tensor.data() + z, W, H, W, int2_{static_cast<int>(x), static_cast<int>(y)}, &*dst.data());
         }
     };
 
@@ -93,8 +93,8 @@ namespace cute
             static_assert(is_rmem<TS>::value);
             int H = size<0>(traits.tensor);
             int W = size<1>(traits.tensor) * sizeof(typename decltype(traits.tensor)::engine_type::value_type);
-            auto [y, x] = dst.data().coord_;
-            XE_2D_SAVE::copy(traits.tensor.data(), W, H, W, int2_{static_cast<int>(x), static_cast<int>(y)}, &*src.data());
+            auto [y, x, z] = dst.data().coord_;
+            XE_2D_SAVE::copy(traits.tensor.data() + z, W, H, W, int2_{static_cast<int>(x), static_cast<int>(y)}, &*src.data());
         }
     };
 

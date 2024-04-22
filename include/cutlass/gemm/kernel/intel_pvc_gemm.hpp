@@ -196,6 +196,7 @@ public:
   void
   operator()(Params const& params, char* smem_buf) {
     using namespace cute;
+    using sycl::ext::oneapi::experimental::this_nd_item;
     using X = Underscore;
 
     // Preconditions
@@ -222,17 +223,17 @@ public:
     const int frags_sg_n = (N - 1) / tN + 1; // total fragments of B
     const int sg_m = (frags_sg_m - 1) / MM + 1; // sub_groups required to process A fragments
     const int sg_n = (frags_sg_n - 1) / NN + 1; // sub_groups required to process B fragments
-    using sycl::ext::oneapi::experimental::this_nd_item;
-    const int item_global_id = static_cast<int>(this_nd_item<3>().get_global_linear_id());
+    const int items_per_batch = sg_m * sg_n * SG_SZ;
+    const int item_global_id = static_cast<int>(this_nd_item<3>().get_global_linear_id() % items_per_batch);
     const int sg_global_id = item_global_id / SG_SZ;
     const int m_coord = (sg_global_id / sg_n) * MM * tM;
     const int n_coord = (sg_global_id % sg_n) * NN * tN;
     const int l_coord = BlockIdxZ();
     auto blk_coord_mnkl = make_coord(m_coord, n_coord, _, l_coord);                                        // (m,n,k,l)
 
-    Tensor tAi = make_tensor(make_inttuple_iter(m_coord, 0), make_layout(make_shape(_1{}, Int<MM>{}, K), make_stride(_1{}, tM*E<0>{}, E<1>{})));
-    Tensor tBi = make_tensor(make_inttuple_iter(0, n_coord), make_layout(make_shape(_1{}, K, Int<NN>{}), make_stride(_1{}, E<0>{}, tN*E<1>{})));
-    Tensor tCi = make_tensor(make_inttuple_iter(m_coord, n_coord), make_layout(Shape<_1, Int<MM>, Int<NN>>{}, make_stride(_1{}, tM*E<0>{}, tN*E<1>{})));
+    Tensor tAi = make_tensor(make_inttuple_iter(m_coord, 0, l_coord), make_layout(make_shape(_1{}, Int<MM>{}, K, L), make_stride(_1{}, tM*E<0>{}, E<1>{}, E<2>{}*K*M)));
+    Tensor tBi = make_tensor(make_inttuple_iter(0, n_coord, l_coord), make_layout(make_shape(_1{}, K, Int<NN>{}, L), make_stride(_1{}, E<0>{}, tN*E<1>{}, E<2>{}*K*N)));
+    Tensor tCi = make_tensor(make_inttuple_iter(m_coord, n_coord, l_coord), make_layout(make_shape(_1{}, Int<MM>{}, Int<NN>{}, L), make_stride(_1{}, tM*E<0>{}, tN*E<1>{}, E<2>{}*M*N)));
 
     // Compute tile residues for predication
     auto m_max_coord = M - get<0>(blk_shape) * m_coord;//size<0>(gA) * get<0>(blk_coord_mnkl);                             // M - BLK_M * m_coord
@@ -252,8 +253,8 @@ public:
     CollectiveMainloop collective_mma;
     collective_mma(
       accumulators,
-      tAi,
-      tBi,
+      tAi(_,_,_,l_coord),
+      tBi(_,_,_,l_coord),
       accumulators,
       k_tile_iter, k_tile_count,
       residue_mnk,
@@ -261,8 +262,8 @@ public:
       smem_buf,
       params.mainloop
     );
-    auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_SAVE>(make_tensor(params.epilogue.ptr_D, make_shape(M, N)));
-    copy(gmem_tiled_copy_c, accumulators, tCi);
+    auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_SAVE>(make_tensor(params.epilogue.ptr_D, make_shape(M, N, L)));
+    copy(gmem_tiled_copy_c, accumulators, tCi(_,_,_,l_coord));
 
     // Epilogue and write to gD
     // CollectiveEpilogue epilogue{params.epilogue};
