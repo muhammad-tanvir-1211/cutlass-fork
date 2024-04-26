@@ -40,11 +40,10 @@ namespace cute
     template <class GTensor>
     struct Copy_Traits<XE_2D_LOAD, GTensor>
     {
-        // using ThrID   = Layout<_16>; //TODO: I think it should be 16 (copy is per subgroup) - but static_assert fails
         using ThrID = Layout<_1>;
-        using NumBits = Int<sizeof(typename GTensor::engine_type::value_type) * 8>; // hacky: does vec of 8
+        using NumBits = Int<sizeof(typename GTensor::engine_type::value_type) * 8>;
         // Map from (src-thr,src-val) to bit
-        using SrcLayout = Layout<Shape<_1, NumBits>>; // TODO:  is _1 correct?
+        using SrcLayout = Layout<Shape<_1, NumBits>>;
         // Map from (dst-thr,dst-val) to bit
         using DstLayout = Layout<Shape<_1, NumBits>>;
         // Reference map from (thr,val) to bit
@@ -61,8 +60,7 @@ namespace cute
         {
             static_assert(is_rmem<TD>::value);
             int H = size<0>(traits.tensor);
-            // int W = size<1>(traits.tensor) * sizeof(typename decltype(traits.tensor)::engine_type::value_type);
-            int W = size<1>(traits.tensor) * sizeof(typename TD::value_type); //TODO: inconsistent to give the size in elements but use vector for copy
+            int W = size<1>(traits.tensor) * sizeof(typename TD::value_type);
             auto [y, x, z] = src.data().coord_;
             XE_2D_LOAD::copy(traits.tensor.data() + z, W, H, W, int2_{static_cast<int>(x), static_cast<int>(y)}, &*dst.data());
         }
@@ -71,11 +69,10 @@ namespace cute
     template <class GTensor>
     struct Copy_Traits<XE_2D_SAVE, GTensor>
     {
-        // using ThrID   = Layout<_16>; //TODO: I think it should be 16 (copy is per subgroup) - but static_assert fails
         using ThrID = Layout<_1>;
-        using NumBits = Int<sizeof(typename GTensor::engine_type::value_type) * 8>; // hacky: does vec of 8
+        using NumBits = Int<sizeof(typename GTensor::engine_type::value_type) * 8>;
         // Map from (src-thr,src-val) to bit
-        using SrcLayout = Layout<Shape<_1, NumBits>>; // TODO:  is _1 correct?
+        using SrcLayout = Layout<Shape<_1, NumBits>>;
         // Map from (dst-thr,dst-val) to bit
         using DstLayout = Layout<Shape<_1, NumBits>>;
         // Reference map from (thr,val) to bit

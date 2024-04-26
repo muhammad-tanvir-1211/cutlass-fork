@@ -99,11 +99,10 @@ public:
   // MSVC requires the cast to fix a warning-as-error.
   static constexpr int SharedStorageSize = 0;
 
-  static constexpr uint32_t MaxThreadsPerBlock = 64;
-  // static constexpr uint32_t MaxThreadsPerBlock = CUTE_STATIC_V(cute::get<0>(TiledMma{}) * cute::get<1>(TiledMma{}));
-  static constexpr uint32_t MinBlocksPerMultiprocessor = 1;
-
   static constexpr int SG_SZ = CollectiveMainloop::SG_SZ; // sub_group size
+  static constexpr uint32_t MaxThreadsPerBlock = CollectiveMainloop::MaxThreadsPerBlock;
+  static constexpr uint32_t MinBlocksPerMultiprocessor = CollectiveMainloop::MinBlocksPerMultiprocessor;
+
   static constexpr int num_sg = MaxThreadsPerBlock / SG_SZ; // number of sub_groups per work group
 
   static constexpr int tM = CollectiveMainloop::tM;

@@ -104,6 +104,9 @@ struct CollectiveMma<
   static constexpr int tN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
   static constexpr int tK = get<1>(shape(typename TiledMma::LayoutA_TV{})); // cols per dpas operation per sub_group for Matrix A
 
+  static constexpr uint32_t MaxThreadsPerBlock = tM * tN;
+  static constexpr uint32_t MinBlocksPerMultiprocessor = 1;
+
   static constexpr int MM = get<0>(TileShape{}) / tM; // A frags per sub_group
   static constexpr int NN = get<1>(TileShape{}) / tN; // B frags per sub_group
 
