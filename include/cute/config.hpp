@@ -140,13 +140,7 @@
 // IO
 //
 
-#if defined(CUTLASS_ENABLE_SYCL)
-#include <sycl/sycl.hpp>
-namespace cute
-{
-using sycl::ext::oneapi::experimental::printf;
-}
-#elif !defined(__CUDACC_RTC__)
+#if !defined(__CUDACC_RTC__)
 #include <cstdio>
 #include <iostream>
 #include <iomanip>
