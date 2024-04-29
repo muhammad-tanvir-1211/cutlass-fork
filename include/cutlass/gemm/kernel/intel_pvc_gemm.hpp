@@ -163,7 +163,8 @@ public:
 
   static
   cutlass::Status
-  initialize_workspace(Arguments const& args, void* workspace = nullptr, cudaStream_t stream = nullptr, CudaHostAdapter* cuda_adapter = nullptr) {
+  initialize_workspace(Arguments const& args, void* workspace = nullptr, cudaStream_t stream = nullptr, 
+    CudaHostAdapter* cuda_adapter = nullptr) {
     return Status::kSuccess;
   }
 
@@ -223,17 +224,13 @@ public:
     const int l_coord = BlockIdxZ();
     auto blk_coord_mnkl = make_coord(m_coord, n_coord, _, l_coord);                     // (m,n,k,l)
 
-    Tensor tAi = make_tensor(make_inttuple_iter(m_coord, 0, l_coord), 
-                             make_layout(make_shape(_1{}, Int<MM>{}, K, L), 
-                             make_stride(_1{}, tM*E<0>{}, E<1>{}, E<2>{}*get<2>(params.mainloop.args.dA))));
+    Tensor tAi = params.mainloop.gmem_tiled_copy_a.get_pvc_tensor(make_coord(m_coord, 0, l_coord),
+                                                                  make_shape(Int<MM>{}, K, L),
+                                                                  make_stride(Int<tM>{}, _1{}, get<2>(params.mainloop.args.dA)));
 
-    Tensor tBi = make_tensor(make_inttuple_iter(0, n_coord, l_coord), 
-                             make_layout(make_shape(_1{}, K, Int<NN>{}, L), 
-                             make_stride(_1{}, E<0>{}, tN*E<1>{}, E<2>{}*get<2>(params.mainloop.args.dB))));
-
-    Tensor tCi = make_tensor(make_inttuple_iter(m_coord, n_coord, l_coord), 
-                             make_layout(make_shape(_1{}, Int<MM>{}, Int<NN>{}, L), 
-                             make_stride(_1{}, tM*E<0>{}, tN*E<1>{}, E<2>{}*get<2>(params.epilogue.dD))));
+    Tensor tBi = params.mainloop.gmem_tiled_copy_b.get_pvc_tensor(make_coord(0, n_coord, l_coord),
+                                                                  make_shape(K, Int<NN>{}, L),
+                                                                  make_stride(_1{}, Int<tN>{}, get<2>(params.mainloop.args.dB)));
 
     // Compute tile residues for predication
     auto m_max_coord = M - get<0>(subgroup_shape) * m_coord;                             // M - SUB_M * m_coord
@@ -264,6 +261,11 @@ public:
       params.mainloop
     );
     auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_SAVE>(make_tensor(params.epilogue.ptr_D, make_shape(M, N, L), params.epilogue.dD));
+
+    Tensor tCi = gmem_tiled_copy_c.get_pvc_tensor(make_coord(m_coord, n_coord, l_coord),
+                                                  make_shape(Int<MM>{}, Int<NN>{}, L),
+                                                  make_stride(Int<tM>{}, Int<tN>{}, get<2>(params.epilogue.dD)));
+
     copy(gmem_tiled_copy_c, accumulators, tCi(_,_,_,l_coord));
 
     // Epilogue and write to gD
