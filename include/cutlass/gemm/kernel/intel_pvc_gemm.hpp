@@ -112,6 +112,8 @@ public:
   static constexpr int MM = CollectiveMainloop::MM;
   static constexpr int NN = CollectiveMainloop::NN;
 
+  static constexpr int VecC = CollectiveMainloop::VecC;
+
   // Device side arguments
   struct Arguments {
     GemmUniversalMode mode{};
@@ -241,7 +243,7 @@ public:
 
     // Allocate the tiled_mma and the accumulators for the (M,N) subgroup_shape
     TiledMma tiled_mma;
-    constexpr int VecC = (tN * tM) / SG_SZ;
+
     Tensor accumulators = make_tensor<float>(Shape<Int<VecC>, Int<MM>, Int<NN>>{});
     clear(accumulators);
 

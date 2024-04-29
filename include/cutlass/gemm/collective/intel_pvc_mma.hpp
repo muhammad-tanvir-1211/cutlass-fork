@@ -110,6 +110,17 @@ struct CollectiveMma<
   static constexpr int MM = get<0>(TileShape{}) / tM; // A frags per sub_group
   static constexpr int NN = get<1>(TileShape{}) / tN; // B frags per sub_group
 
+  // Calculate the vector width based on the amount of registers 
+  // required per work item by dividing the total fragment size by 
+  // the sub_group size.
+  static constexpr int VecC = (tN * tM) / SG_SZ;
+  static constexpr int VecA = (tM * tK) / SG_SZ;
+  // Need to divide by 2 here since the data type used for B matrix is 
+  // uint instead of ushort.
+  static constexpr int VecB = (tN * tK) / SG_SZ / (sizeof(uint) / sizeof(ushort));
+
+  static_assert(VecC == VecA && VecC == VecB && VecA == VecB, "Vector width should be same for inputs and output.");
+
   // Host side kernel arguments
   struct Arguments {
     ElementA const* ptr_A;
@@ -181,8 +192,6 @@ struct CollectiveMma<
     static_assert(is_tuple<typename TensorB::engine_type::iterator::value_type>::value, "B tensor must be tuple iterators.");
     static_assert(is_rmem<FrgTensorC>::value, "C tensor must be rmem resident.");
 
-    constexpr int VecA = (tM * tK) / SG_SZ;
-    constexpr int VecB = (tN * tK) / SG_SZ / (sizeof(uint) / sizeof(ushort));
     // Tensor to hold input data
     Tensor tAr = make_tensor<ushort>(Shape<Int<VecA>, Int<MM>>{});
     Tensor tBr = make_tensor<uint>(Shape<Int<VecB>, Int<NN>>{});
