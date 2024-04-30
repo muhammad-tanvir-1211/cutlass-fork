@@ -109,17 +109,16 @@ struct CollectiveMma<
 
   static constexpr int MM = get<0>(TileShape{}) / tM; // A frags per sub_group
   static constexpr int NN = get<1>(TileShape{}) / tN; // B frags per sub_group
+  static constexpr int KK = get<2>(TileShape{}) / tK;
 
   // Calculate the vector width based on the amount of registers 
   // required per work item by dividing the total fragment size by 
   // the sub_group size.
   static constexpr int VecC = (tN * tM) / SG_SZ;
   static constexpr int VecA = (tM * tK) / SG_SZ;
-  // Need to divide by 2 here since the data type used for B matrix is 
-  // uint instead of ushort.
-  static constexpr int VecB = (tN * tK) / SG_SZ / (sizeof(uint) / sizeof(ushort));
+  static constexpr int VecB = (tN * tK) / SG_SZ;
 
-  static_assert(VecC == VecA && VecC == VecB && VecA == VecB, "Vector width should be same for inputs and output.");
+  // static_assert(VecC == VecA && VecC == VecB && VecA == VecB, "Vector width should be same for inputs and output.");
 
   // Host side kernel arguments
   struct Arguments {
@@ -193,20 +192,28 @@ struct CollectiveMma<
     static_assert(is_rmem<FrgTensorC>::value, "C tensor must be rmem resident.");
 
     // Tensor to hold input data
-    Tensor tAr = make_tensor<ushort>(Shape<Int<VecA>, Int<MM>>{});
-    Tensor tBr = make_tensor<uint>(Shape<Int<VecB>, Int<NN>>{});
+    Tensor tAr = make_tensor<ushort>(Shape<Int<get<0>(TileShape{}) * KK>, Int<1>>{});
+    Tensor tBr = make_tensor<ushort>(Shape<Int<KK * get<1>(TileShape{}) / NN>, Int<NN>>{});
     // Instantiate the MMA object
     TiledMma tiled_mma;
 
     //
     // Mainloop
     //
-   for (int k_tile = 0, k = 0; k_tile < k_tile_count; ++k_tile, k += tK)
+   for (int k_tile = 0, k = 0; k_tile < k_tile_count; ++k_tile, k += tK * KK)
    {
      // Copy gmem to rmem for the first k_tile
      copy(mainloop.gmem_tiled_copy_a, gA(_,_,k), tAr);
      copy(mainloop.gmem_tiled_copy_b, gB(_,k/2,_), tBr);
-     cute::gemm(tiled_mma, accum, tAr, tBr, src_accum);
+
+     auto tAr_view = make_tensor(static_cast<decltype(tAr) &&>(tAr).data(),
+                              Shape<Int<VecA>, Int<MM>, Int<KK>>{});
+     auto tBr_view = make_tensor(static_cast<decltype(tBr) &&>(tBr).data(),
+                              Shape<Int<VecB>, Int<KK>, Int<NN>>{});
+     for (int kl = 0; kl < KK; kl++) {
+       cute::gemm(tiled_mma, accum, tAr_view(_, _, kl), tBr_view(_, kl, _), src_accum);
+     }
+    //  cute::gemm(tiled_mma, accum, tAr, tBr, src_accum);
    }
   }
 };

@@ -225,8 +225,8 @@ public:
     auto blk_coord_mnkl = make_coord(m_coord, n_coord, _, l_coord);                     // (m,n,k,l)
 
     Tensor tAi = params.mainloop.gmem_tiled_copy_a.get_pvc_tensor(make_coord(m_coord, 0, l_coord),
-                                                                  make_shape(Int<MM>{}, K, L),
-                                                                  make_stride(Int<tM>{}, _1{}, get<2>(params.mainloop.args.dA)));
+                                                                  make_shape(_1{}, K, L),
+                                                                  make_stride(Int<MM * tM>{}, _1{}, get<2>(params.mainloop.args.dA)));
 
     Tensor tBi = params.mainloop.gmem_tiled_copy_b.get_pvc_tensor(make_coord(0, n_coord, l_coord),
                                                                   make_shape(K, Int<NN>{}, L),
@@ -260,7 +260,7 @@ public:
       smem_buf,
       params.mainloop
     );
-    auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_SAVE>(make_tensor(params.epilogue.ptr_D, make_shape(M, N, L), params.epilogue.dD));
+    auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_U32x8x16x1x1_ST_N>(make_tensor(params.epilogue.ptr_D, make_shape(M, N, L), params.epilogue.dD));
 
     Tensor tCi = gmem_tiled_copy_c.get_pvc_tensor(make_coord(m_coord, n_coord, l_coord),
                                                   make_shape(Int<MM>{}, Int<NN>{}, L),
