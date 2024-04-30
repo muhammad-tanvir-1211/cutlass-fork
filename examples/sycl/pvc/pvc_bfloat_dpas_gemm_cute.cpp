@@ -239,7 +239,7 @@ struct ExampleRunner {
     auto [M, N, K, L] = problem_shape_MNKL;
 
     stride_A = cutlass::make_cute_packed_stride(StrideA{}, cute::make_shape(M, K, L));
-    stride_B = cutlass::make_cute_packed_stride(StrideB{}, cute::make_shape(N, K, L));
+    stride_B = cutlass::make_cute_packed_stride(StrideB{}, cute::make_shape(K, N, L));
     stride_C = cutlass::make_cute_packed_stride(StrideC{}, cute::make_shape(M, N, L));
     stride_D = cutlass::make_cute_packed_stride(StrideD{}, cute::make_shape(M, N, L));
 
