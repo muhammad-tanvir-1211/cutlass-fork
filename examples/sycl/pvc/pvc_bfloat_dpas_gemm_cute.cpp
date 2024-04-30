@@ -366,10 +366,10 @@ int main(int argc, const char** argv)
   using LayoutC = cutlass::layout::RowMajor;
   using LayoutD = cutlass::layout::RowMajor;
 
-  using GmemTiledCopyA = XE_2D_LOAD;
-  using GmemTiledCopyB = XE_2D_LOAD;
+  using GmemTiledCopyA = XE_2D_U16x8x16x4x2_LD_N;
+  using GmemTiledCopyB = XE_2D_U16x16x16x2x1_LD_N;
 
-  using TileShape = Shape<_32, _32, _16>;
+  using TileShape = Shape<_32, _64, _32>;
 
   using TiledMma = TiledMMA<MMA_Atom<XE_8x16x16_BF16BF16F32F32_NN>,
           Layout<Shape<_8,_16,_1>>>;
