@@ -54,7 +54,7 @@ struct XE_2D_LD_Unpack
       int H = size<0>(traits.tensor);
       int W = size<1>(traits.tensor) * sizeof(typename Copy_Traits::CopyInternalType);
       auto [y, x, z] = src.data().coord_;
-      CopyOp::copy(traits.tensor.data() + z, W, H, W, intel::coord_t{static_cast<int>(x), static_cast<int>(y)}, &*dst.data());
+      CopyOp::copy(traits.tensor.data() + z, W, H, W, intel::coord_t{x, y}, &*dst.data());
   }
 
   template <class GCoord, class GShape, class GStride>
@@ -284,7 +284,7 @@ struct XE_2D_ST_Unpack
       int H = size<0>(traits.tensor);
       int W = size<1>(traits.tensor) * sizeof(typename Copy_Traits::CopyInternalType);
       auto [y, x, z] = dst.data().coord_;
-      CopyOp::copy(traits.tensor.data() + z, W, H, W, intel::coord_t{static_cast<int>(x), static_cast<int>(y)}, &*src.data());
+      CopyOp::copy(traits.tensor.data() + z, W, H, W, intel::coord_t{x, y}, &*src.data());
   }
 
   template <class GCoord, class GShape, class GStride>
