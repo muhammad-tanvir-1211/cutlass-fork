@@ -178,10 +178,8 @@ public:
     auto M = get<0>(params.problem_shape);
     auto N = get<1>(params.problem_shape);
 
-    const int frags_sg_m = (M - 1) / tM + 1; // total fragments of A
-    const int frags_sg_n = (N - 1) / tN + 1; // total fragments of B
-    const int sg_m = (frags_sg_m - 1) / MM + 1; // sub_groups required to process A fragments
-    const int sg_n = (frags_sg_n - 1) / NN + 1; // sub_groups required to process B fragments
+    const int sg_m = (M - 1) / get<0>(TileShape{}) + 1; // sub_groups required to process A fragments
+    const int sg_n = (N - 1) / get<1>(TileShape{}) + 1; // sub_groups required to process B fragments
 
     return dim3(
       sg_m,
@@ -198,6 +196,8 @@ public:
   CUTLASS_DEVICE
   void
   operator()(Params const& params, char* smem_buf) {
+
+    (void)smem_buf;
 
     // Preconditions
     CUTE_STATIC_ASSERT(is_static<TileShape>::value);
@@ -219,18 +219,17 @@ public:
     // Get the appropriate blocks for this sub_group -- potential for sub_group locality
     int thread_idx = int(ThreadIdxX());
     auto subgroup_shape = TileShape{};                                                  // (SUB_M,SUB_N,SUB_K)
-    const int m_coord = BlockIdxX() * MM * tM;
-    const int n_coord = (BlockIdxY() * num_sg + thread_idx / SG_SZ) * NN * tN;
+    const int m_coord = BlockIdxX() * get<0>(subgroup_shape);
+    const int n_coord = (BlockIdxY() * num_sg + thread_idx / SG_SZ) * get<1>(subgroup_shape);
     const int l_coord = BlockIdxZ();
-    auto blk_coord_mnkl = make_coord(m_coord, n_coord, _, l_coord);                     // (m,n,k,l)
 
     Tensor tAi = params.mainloop.gmem_tiled_copy_a.get_pvc_tensor(make_coord(m_coord, 0, l_coord),
                                                                   make_shape(_1{}, K, L),
-                                                                  make_stride(Int<MM * tM>{}, _1{}, get<2>(params.mainloop.args.dA)));
+                                                                  make_stride(Int<MM * tM>{}, _1{}));
 
     Tensor tBi = params.mainloop.gmem_tiled_copy_b.get_pvc_tensor(make_coord(0, n_coord, l_coord),
                                                                   make_shape(K, Int<NN>{}, L),
-                                                                  make_stride(_1{}, Int<tN>{}, get<2>(params.mainloop.args.dB)));
+                                                                  make_stride(_1{}, Int<tN>{}));
 
     // Compute tile residues for predication
     auto m_max_coord = M - get<0>(subgroup_shape) * m_coord;                             // M - SUB_M * m_coord
@@ -264,7 +263,7 @@ public:
 
     Tensor tCi = gmem_tiled_copy_c.get_pvc_tensor(make_coord(m_coord, n_coord, l_coord),
                                                   make_shape(Int<MM>{}, Int<NN>{}, L),
-                                                  make_stride(Int<tM>{}, Int<tN>{}, get<2>(params.epilogue.dD)));
+                                                  make_stride(Int<tM>{}, Int<tN>{}));
 
     copy(gmem_tiled_copy_c, accumulators, tCi(_,_,_,l_coord));
 

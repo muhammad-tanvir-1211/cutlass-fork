@@ -118,8 +118,6 @@ struct CollectiveMma<
   static constexpr int VecA = (tM * tK) / SG_SZ;
   static constexpr int VecB = (tN * tK) / SG_SZ;
 
-  // static_assert(VecC == VecA && VecC == VecB && VecA == VecB, "Vector width should be same for inputs and output.");
-
   // Host side kernel arguments
   struct Arguments {
     ElementA const* ptr_A;
@@ -135,8 +133,6 @@ struct CollectiveMma<
                                 repeat_like(StrideB{}, int32_t(0)), StrideB{})));
     XE_Copy_A gmem_tiled_copy_a;
     XE_Copy_B gmem_tiled_copy_b;
-
-    Arguments args;
   };
 
   //
@@ -158,7 +154,7 @@ struct CollectiveMma<
 
     typename Params::XE_Copy_A copyA = make_xe_2d_copy<GmemTiledCopyA>(tensorA);
     typename Params::XE_Copy_B copyB = make_xe_2d_copy<GmemTiledCopyB>(tensorB);
-    return Params{copyA, copyB, args};
+    return Params{copyA, copyB};
   }
 
   /// Perform a subgroup-scoped matrix multiply-accumulate
@@ -194,6 +190,12 @@ struct CollectiveMma<
     // Tensor to hold input data
     Tensor tAr = make_tensor<ushort>(Shape<Int<get<0>(TileShape{}) * KK>, Int<1>>{});
     Tensor tBr = make_tensor<ushort>(Shape<Int<KK * get<1>(TileShape{}) / NN>, Int<NN>>{});
+
+    Tensor tAr_view = make_tensor(static_cast<decltype(tAr) &&>(tAr).data(),
+                            Shape<Int<VecA>, Int<MM>, Int<KK>>{});
+    Tensor tBr_view = make_tensor(static_cast<decltype(tBr) &&>(tBr).data(),
+                            Shape<Int<VecB>, Int<KK>, Int<NN>>{});
+
     // Instantiate the MMA object
     TiledMma tiled_mma;
 
@@ -206,14 +208,9 @@ struct CollectiveMma<
      copy(mainloop.gmem_tiled_copy_a, gA(_,_,k), tAr);
      copy(mainloop.gmem_tiled_copy_b, gB(_,k/2,_), tBr);
 
-     auto tAr_view = make_tensor(static_cast<decltype(tAr) &&>(tAr).data(),
-                              Shape<Int<VecA>, Int<MM>, Int<KK>>{});
-     auto tBr_view = make_tensor(static_cast<decltype(tBr) &&>(tBr).data(),
-                              Shape<Int<VecB>, Int<KK>, Int<NN>>{});
      for (int kl = 0; kl < KK; kl++) {
        cute::gemm(tiled_mma, accum, tAr_view(_, _, kl), tBr_view(_, kl, _), src_accum);
      }
-    //  cute::gemm(tiled_mma, accum, tAr, tBr, src_accum);
    }
   }
 };
@@ -297,8 +294,6 @@ struct CollectiveMma<
                                 repeat_like(StrideB{}, int32_t(0)), StrideB{})));
     XE_Copy_A gmem_tiled_copy_a;
     XE_Copy_B gmem_tiled_copy_b;
-
-    Arguments args;
   };
 
   //
@@ -320,7 +315,7 @@ struct CollectiveMma<
 
     typename Params::XE_Copy_A copyA = make_xe_2d_copy<GmemTiledCopyA>(tensorA);
     typename Params::XE_Copy_B copyB = make_xe_2d_copy<GmemTiledCopyB>(tensorB);
-    return Params{copyA, copyB, args};
+    return Params{copyA, copyB};
   }
 
   /// Perform a subgroup-scoped matrix multiply-accumulate

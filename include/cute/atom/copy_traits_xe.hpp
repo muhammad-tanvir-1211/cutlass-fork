@@ -63,7 +63,7 @@ struct XE_2D_LD_Unpack
   {
     return make_tensor(make_inttuple_iter(coord), 
                         make_layout(make_shape(_1{}, get<0>(shape), get<1>(shape), get<2>(shape)), 
-                                    make_stride(_1{}, E<0>{} * get<0>(stride_mul), E<1>{} * get<1>(stride_mul), E<2>{} * get<2>(stride_mul))));
+                                    make_stride(_1{}, E<0>{} * get<0>(stride_mul), E<1>{} * get<1>(stride_mul), E<2>{} * get<2>(stride(tensor)))));
   }
 };
 
@@ -293,7 +293,7 @@ struct XE_2D_ST_Unpack
   {
     return make_tensor(make_inttuple_iter(coord), 
                         make_layout(make_shape(_1{}, get<0>(shape), get<1>(shape), get<2>(shape)), 
-                                    make_stride(_1{}, E<0>{} * get<0>(stride_mul), E<1>{} * get<1>(stride_mul), E<2>{} * get<2>(stride_mul))));
+                                    make_stride(_1{}, E<0>{} * get<0>(stride_mul), E<1>{} * get<1>(stride_mul), E<2>{} * get<2>(stride(tensor)))));
   }
 };
 
