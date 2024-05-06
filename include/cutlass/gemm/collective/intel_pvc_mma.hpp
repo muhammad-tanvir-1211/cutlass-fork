@@ -98,25 +98,25 @@ struct CollectiveMma<
   using TransformB = TransformB_;
   using ArchTag = typename DispatchPolicy::ArchTag;
 
-  static constexpr int SG_SZ = DispatchPolicy::SG_SZ;
+  static constexpr int SubgroupSize = DispatchPolicy::SubgroupSize;
   
-  static constexpr int tM = get<0>(shape(typename TiledMma::LayoutA_TV{})); // rows per dpas operation per sub_group for Matrix A
-  static constexpr int tN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
-  static constexpr int tK = get<1>(shape(typename TiledMma::LayoutA_TV{})); // cols per dpas operation per sub_group for Matrix A
+  static constexpr int DpasM = get<0>(shape(typename TiledMma::LayoutA_TV{})); // rows per dpas operation per sub_group for Matrix A
+  static constexpr int DpasN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
+  static constexpr int DpasK = get<1>(shape(typename TiledMma::LayoutA_TV{})); // cols per dpas operation per sub_group for Matrix A
 
-  static constexpr uint32_t MaxThreadsPerBlock = tM * tN;
+  static constexpr uint32_t MaxThreadsPerBlock = DpasM * DpasN;
   static constexpr uint32_t MinBlocksPerMultiprocessor = 1;
 
-  static constexpr int MM = get<0>(TileShape{}) / tM; // A frags per sub_group
-  static constexpr int NN = get<1>(TileShape{}) / tN; // B frags per sub_group
-  static constexpr int KK = get<2>(TileShape{}) / tK;
+  static constexpr int FragsM = get<0>(TileShape{}) / DpasM; // A frags per sub_group
+  static constexpr int FragsN = get<1>(TileShape{}) / DpasN; // B frags per sub_group
+  static constexpr int FragsK = get<2>(TileShape{}) / DpasK;
 
   // Calculate the vector width based on the amount of registers 
   // required per work item by dividing the total fragment size by 
   // the sub_group size.
-  static constexpr int VecC = (tN * tM) / SG_SZ;
-  static constexpr int VecA = (tM * tK) / SG_SZ;
-  static constexpr int VecB = (tN * tK) / SG_SZ;
+  static constexpr int VecC = (DpasN * DpasM) / SubgroupSize;
+  static constexpr int VecA = (DpasM * DpasK) / SubgroupSize;
+  static constexpr int VecB = (DpasN * DpasK) / SubgroupSize;
 
   // Host side kernel arguments
   struct Arguments {
@@ -188,27 +188,27 @@ struct CollectiveMma<
     static_assert(is_rmem<FrgTensorC>::value, "C tensor must be rmem resident.");
 
     // Tensor to hold input data
-    Tensor tAr = make_tensor<ushort>(Shape<Int<get<0>(TileShape{}) * KK>, Int<1>>{});
-    Tensor tBr = make_tensor<ushort>(Shape<Int<KK * get<1>(TileShape{}) / NN>, Int<NN>>{});
+    Tensor tAr = make_tensor<ushort>(Shape<Int<get<0>(TileShape{}) * FragsK>, Int<1>>{});
+    Tensor tBr = make_tensor<ushort>(Shape<Int<FragsK * get<1>(TileShape{}) / FragsN>, Int<FragsN>>{});
 
     Tensor tAr_view = make_tensor(static_cast<decltype(tAr) &&>(tAr).data(),
-                            Shape<Int<VecA>, Int<MM>, Int<KK>>{});
+                            Shape<Int<VecA>, Int<FragsM>, Int<FragsK>>{});
     Tensor tBr_view = make_tensor(static_cast<decltype(tBr) &&>(tBr).data(),
-                            Shape<Int<VecB>, Int<KK>, Int<NN>>{});
+                            Shape<Int<VecB>, Int<FragsK>, Int<FragsN>>{});
 
-    // Instantiate the MMA object
+    // Instantiate the FragsMA object
     TiledMma tiled_mma;
 
     //
     // Mainloop
     //
-   for (int k_tile = 0, k = 0; k_tile < k_tile_count; ++k_tile, k += tK * KK)
+   for (int k_tile = 0, k = 0; k_tile < k_tile_count; ++k_tile, k += DpasK * FragsK)
    {
      // Copy gmem to rmem for the first k_tile
      copy(mainloop.gmem_tiled_copy_a, gA(_,_,k), tAr);
      copy(mainloop.gmem_tiled_copy_b, gB(_,k/2,_), tBr);
 
-     for (int kl = 0; kl < KK; kl++) {
+     for (int kl = 0; kl < FragsK; kl++) {
        cute::gemm(tiled_mma, accum, tAr_view(_, _, kl), tBr_view(_, kl, _), src_accum);
      }
    }
@@ -271,14 +271,14 @@ struct CollectiveMma<
   using TransformB = TransformB_;
   using ArchTag = typename DispatchPolicy::ArchTag;
 
-  static constexpr int SG_SZ = DispatchPolicy::SG_SZ;
+  static constexpr int SubgroupSize = DispatchPolicy::SubgroupSize;
   
-  static constexpr int tM = get<0>(shape(typename TiledMma::LayoutA_TV{})); // rows per dpas operation per sub_group for Matrix A
-  static constexpr int tN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
-  static constexpr int tK = get<1>(shape(typename TiledMma::LayoutA_TV{})); // cols per dpas operation per sub_group for Matrix A
+  static constexpr int DpasM = get<0>(shape(typename TiledMma::LayoutA_TV{})); // rows per dpas operation per sub_group for Matrix A
+  static constexpr int DpasN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
+  static constexpr int DpasK = get<1>(shape(typename TiledMma::LayoutA_TV{})); // cols per dpas operation per sub_group for Matrix A
 
-  static constexpr int MM = get<0>(TileShape{}) / tM; // A frags per sub_group
-  static constexpr int NN = get<1>(TileShape{}) / tN; // B frags per sub_group
+  static constexpr int FragsM = get<0>(TileShape{}) / DpasM; // A frags per sub_group
+  static constexpr int FragsN = get<1>(TileShape{}) / DpasN; // B frags per sub_group
 
   struct Arguments {
     ElementA const* ptr_A;

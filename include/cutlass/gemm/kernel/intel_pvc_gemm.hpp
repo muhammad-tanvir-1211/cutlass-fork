@@ -99,18 +99,17 @@ public:
   // MSVC requires the cast to fix a warning-as-error.
   static constexpr int SharedStorageSize = 0;
 
-  static constexpr int SG_SZ = CollectiveMainloop::SG_SZ; // sub_group size
+  static constexpr int SubgroupSize = CollectiveMainloop::SubgroupSize; // sub_group size
   static constexpr uint32_t MaxThreadsPerBlock = CollectiveMainloop::MaxThreadsPerBlock;
   static constexpr uint32_t MinBlocksPerMultiprocessor = CollectiveMainloop::MinBlocksPerMultiprocessor;
 
-  static constexpr int num_sg = MaxThreadsPerBlock / SG_SZ; // number of sub_groups per work group
+  static constexpr int num_sg = MaxThreadsPerBlock / SubgroupSize; // number of sub_groups per work group
 
-  static constexpr int tM = CollectiveMainloop::tM;
-  static constexpr int tN = CollectiveMainloop::tN;
-  static constexpr int tK = CollectiveMainloop::tK;
+  static constexpr int DpasM = CollectiveMainloop::DpasM;
+  static constexpr int DpasN = CollectiveMainloop::DpasN;
 
-  static constexpr int MM = CollectiveMainloop::MM;
-  static constexpr int NN = CollectiveMainloop::NN;
+  static constexpr int FragsM = CollectiveMainloop::FragsM;
+  static constexpr int FragsN = CollectiveMainloop::FragsN;
 
   static constexpr int VecC = CollectiveMainloop::VecC;
 
@@ -220,16 +219,16 @@ public:
     int thread_idx = int(ThreadIdxX());
     auto subgroup_shape = TileShape{};                                                  // (SUB_M,SUB_N,SUB_K)
     const int m_coord = BlockIdxX() * get<0>(subgroup_shape);
-    const int n_coord = (BlockIdxY() * num_sg + thread_idx / SG_SZ) * get<1>(subgroup_shape);
+    const int n_coord = (BlockIdxY() * num_sg + thread_idx / SubgroupSize) * get<1>(subgroup_shape);
     const int l_coord = BlockIdxZ();
 
     Tensor tAi = params.mainloop.gmem_tiled_copy_a.get_pvc_tensor(make_coord(m_coord, 0, l_coord),
                                                                   make_shape(_1{}, K, L),
-                                                                  make_stride(Int<MM * tM>{}, _1{}));
+                                                                  make_stride(Int<FragsM * DpasM>{}, _1{}));
 
     Tensor tBi = params.mainloop.gmem_tiled_copy_b.get_pvc_tensor(make_coord(0, n_coord, l_coord),
-                                                                  make_shape(K, Int<NN>{}, L),
-                                                                  make_stride(_1{}, Int<tN>{}));
+                                                                  make_shape(K, Int<FragsN>{}, L),
+                                                                  make_stride(_1{}, Int<DpasN>{}));
 
     // Compute tile residues for predication
     auto m_max_coord = M - get<0>(subgroup_shape) * m_coord;                             // M - SUB_M * m_coord
@@ -240,7 +239,7 @@ public:
     // Allocate the tiled_mma and the accumulators for the (M,N) subgroup_shape
     TiledMma tiled_mma;
 
-    Tensor accumulators = make_tensor<float>(Shape<Int<VecC>, Int<MM>, Int<NN>>{});
+    Tensor accumulators = make_tensor<float>(Shape<Int<VecC>, Int<FragsM>, Int<FragsN>>{});
     clear(accumulators);
 
     auto k_tile_iter  = cute::make_coord_iterator(make_shape(K / get<2>(subgroup_shape)));
@@ -262,8 +261,8 @@ public:
     auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_U32x8x16x1x1_ST_N>(make_tensor(params.epilogue.ptr_D, make_shape(M, N, L), params.epilogue.dD));
 
     Tensor tCi = gmem_tiled_copy_c.get_pvc_tensor(make_coord(m_coord, n_coord, l_coord),
-                                                  make_shape(Int<MM>{}, Int<NN>{}, L),
-                                                  make_stride(Int<tM>{}, Int<tN>{}));
+                                                  make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
+                                                  make_stride(Int<DpasM>{}, Int<DpasN>{}));
 
     copy(gmem_tiled_copy_c, accumulators, tCi(_,_,_,l_coord));
 

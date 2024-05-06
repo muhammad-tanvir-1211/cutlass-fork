@@ -277,7 +277,7 @@ struct MainloopIntelPVCBase {
   using ArchTag = arch::IntelPVC;
   using Schedule = KernelSinglestage;
   using ClusterShape = Shape<_1,_1,_1>;
-  static constexpr int SG_SZ = 16;
+  static constexpr int SubgroupSize = 16;
 };
 
 struct MainloopIntelPVCUnpredicated : MainloopIntelPVCBase{};
