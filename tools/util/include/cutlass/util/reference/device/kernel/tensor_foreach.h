@@ -51,7 +51,11 @@ template <typename Func, int Rank, int RankRemaining>
 struct TensorForEachHelper {
 
   /// Constructor for general rank
+#if defined (CUTLASS_ENABLE_SYCL)
+  __inline__
+#else
   __inline__ __device__
+#endif
   TensorForEachHelper(Func &func, Coord<Rank> const &size, Coord<Rank> &coord, int64_t index) {
 
     int64_t product = 1;
@@ -73,7 +77,11 @@ template <typename Func, int Rank>
 struct TensorForEachHelper<Func, Rank, 0> {
 
   /// Constructor for fastest changing rank
+#if defined (CUTLASS_ENABLE_SYCL)
+  __inline__
+#else
   __inline__ __device__
+#endif
   TensorForEachHelper(Func &func, Coord<Rank> const &size, Coord<Rank> &coord, int64_t index) {
 
     coord[Rank - 1] = index;
@@ -90,7 +98,12 @@ struct TensorForEachHelper<Func, Rank, 0> {
 
 /// Kernel calls a functor for each element in a tensor's index space
 template <typename Func, int Rank, typename Params>
-__global__ void TensorForEach(Coord<Rank> size, Params params = Params()) {
+#if defined (CUTLASS_ENABLE_SYCL)
+void
+#else
+__global__ void
+#endif
+ TensorForEach(Coord<Rank> size, Params params = Params()) {
 
   Func func(params);
 
@@ -115,7 +128,12 @@ __global__ void TensorForEach(Coord<Rank> size, Params params = Params()) {
 
 /// Kernel calls a functor for each element along a tensor's diagonal
 template <typename Func, int Rank, typename Params>
-__global__ void TensorDiagonalForEach(Coord<Rank> size, Params params, int start, int end) {
+#if defined (CUTLASS_ENABLE_SYCL)
+void
+#else
+__global__ void
+#endif
+ TensorDiagonalForEach(Coord<Rank> size, Params params, int start, int end) {
 
   Func func(params);
 
@@ -136,7 +154,12 @@ __global__ void TensorDiagonalForEach(Coord<Rank> size, Params params, int start
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <typename Element, typename Func>
-__global__ void BlockForEach(
+#if defined (CUTLASS_ENABLE_SYCL)
+void
+#else
+__global__ void
+#endif
+ BlockForEach(
   Element *ptr, 
   size_t capacity, 
   typename Func::Params params) {
