@@ -54,6 +54,7 @@ template <typename T>
 T* allocate(size_t count = 1) {
 
   T* ptr = 0;
+
   size_t bytes = 0;
 
   bytes = count * sizeof(T);
@@ -71,7 +72,6 @@ T* allocate(size_t count = 1) {
     throw cuda_exception("Failed to allocate memory", cuda_error);
   }
 #endif
-
   return ptr;
 }
 
@@ -105,7 +105,7 @@ void copy(T* dst, T const* src, size_t count, cudaMemcpyKind kind) {
   cudaError_t cuda_error = (cudaMemcpy(dst, src, bytes, kind));
   if (cuda_error != cudaSuccess) {
     throw cuda_exception("cudaMemcpy() failed", cuda_error);
-  }  
+  }
 #endif
 }
 
@@ -156,8 +156,8 @@ public:
   /// Delete functor for CUDA device memory
   struct deleter {
     void operator()(T* ptr) {
-#ifdef CUTLASS_ENABLE_SYCL
-      syclcompat::free(reinterpret_cast<void*>(ptr));
+#if defined(CUTLASS_ENABLE_SYCL)
+      syclcompat::free(ptr);
 #else
       cudaError_t cuda_error = (cudaFree(ptr));
       if (cuda_error != cudaSuccess) {
