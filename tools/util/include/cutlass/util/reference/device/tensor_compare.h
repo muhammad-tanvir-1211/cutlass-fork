@@ -53,7 +53,12 @@ namespace device {
 namespace kernel {
 
 template <typename Element>
-__global__ void BlockCompareEqual(
+#if defined (CUTLASS_ENABLE_SYCL)
+void
+#else
+__global__ void
+#endif
+ BlockCompareEqual(
   int *equal, 
   Element const *ptr_A,
   Element const *ptr_B,
@@ -75,7 +80,12 @@ __global__ void BlockCompareEqual(
 }
 
 template <typename Element>
-__global__ void BlockCompareRelativelyEqual(
+#if defined (CUTLASS_ENABLE_SYCL)
+void
+#else
+__global__ void
+#endif
+ BlockCompareRelativelyEqual(
   int *equal, 
   Element const *ptr_A,
   Element const *ptr_B,
@@ -157,13 +167,9 @@ bool BlockCompareEqual(
 #endif
   }
 
-  dim3 grid(grid_size, 1, 1);
-  dim3 block(block_size, 1, 1);
-
 #if defined(CUTLASS_ENABLE_SYCL)
-  const auto sycl_block = syclcompat::dim3(block.x, block.y, block.z);
-  const auto sycl_grid = syclcompat::dim3(grid.x, grid.y, grid.z);
-
+  const auto sycl_block = syclcompat::dim3(block_size, 1, 1);
+  const auto sycl_grid = syclcompat::dim3(grid_size, 1, 1);
   syclcompat::launch<kernel::BlockCompareEqual<Element>>(sycl_grid, sycl_block, device_equal_flag, ptr_A, ptr_B, capacity);
   syclcompat::wait();
 
@@ -171,6 +177,8 @@ bool BlockCompareEqual(
 
   syclcompat::free(reinterpret_cast<void*>(device_equal_flag));
 #else
+  dim3 grid(grid_size, 1, 1);
+  dim3 block(block_size, 1, 1);
   kernel::BlockCompareEqual<Element><<< grid, block >>>(device_equal_flag, ptr_A, ptr_B, capacity);
 
   if (cudaMemcpy(
@@ -249,12 +257,9 @@ bool BlockCompareRelativelyEqual(
 #endif
   }
 
-  dim3 grid(grid_size, 1, 1);
-  dim3 block(block_size, 1, 1);
-
 #if defined(CUTLASS_ENABLE_SYCL)
-  const auto sycl_block = syclcompat::dim3(block.x, block.y, block.z);
-  const auto sycl_grid = syclcompat::dim3(grid.x, grid.y, grid.z);
+  const auto sycl_block = syclcompat::dim3(block_size, 1, 1);
+  const auto sycl_grid = syclcompat::dim3(grid_size, 1, 1);
 
   syclcompat::launch<kernel::BlockCompareRelativelyEqual<Element>>(sycl_grid, sycl_block, device_equal_flag, ptr_A, ptr_B, capacity,
                                                                   epsilon, nonzero_floor);
@@ -264,6 +269,8 @@ bool BlockCompareRelativelyEqual(
 
   syclcompat::free(reinterpret_cast<void*>(device_equal_flag));
 #else
+  dim3 grid(grid_size, 1, 1);
+  dim3 block(block_size, 1, 1);
   kernel::BlockCompareRelativelyEqual<Element><<< grid, block >>>(
     device_equal_flag, 
     ptr_A, 

@@ -80,7 +80,10 @@ template <typename T>
 void free(T* ptr) {
   if (ptr) {
 #if defined(CUTLASS_ENABLE_SYCL)
-    syclcompat::free(reinterpret_cast<void*>(ptr));
+    syclcompat::free(ptr);
+    if (ptr != nullptr) {
+      throw std::runtime_error("Failed to free device memory");
+    }
 #else
     cudaError_t cuda_error = (cudaFree(ptr));
     if (cuda_error != cudaSuccess) {

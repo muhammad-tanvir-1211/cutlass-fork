@@ -73,7 +73,12 @@ template <
   int kMblock = 4,
   int kNblock = 4
 >
-__global__ void GemmComplex(
+#if defined (CUTLASS_ENABLE_SYCL)
+void 
+#else
+__global__ void
+#endif
+ GemmComplex(
   gemm::GemmCoord problem_size,
   ScalarType alpha,
   TensorRef<ElementA, LayoutA> tensor_a,
@@ -228,6 +233,10 @@ void GemmComplex(
   int const kMblock = 4;
   int const kNblock = 4;
 
+#if defined (CUTLASS_ENABLE_SYCL)
+using syclcompat::dim3;
+#endif
+
   dim3 block(16, 8);
   dim3 grid(
     (problem_size.m() + block.x * kMblock - 1) / (block.x * kMblock),
@@ -237,8 +246,6 @@ void GemmComplex(
 
   if (grid.y <= std::numeric_limits<uint16_t>::max()) {
 #if defined(CUTLASS_ENABLE_SYCL)
-  const auto sycl_block = syclcompat::dim3(block.x, block.y, block.z);
-  const auto sycl_grid = syclcompat::dim3(grid.x, grid.y, grid.z);
 
   syclcompat::launch<kernel::GemmComplex<
                       ElementA,
@@ -254,7 +261,7 @@ void GemmComplex(
                       InnerProductOp,
                       kMblock,
                       kNblock
-                    >>(sycl_grid, sycl_block, 
+                    >>(grid, block, 
                         problem_size,
                         alpha,
                         tensor_a,
@@ -317,9 +324,6 @@ void GemmComplex(
     );
 
 #if defined (CUTLASS_ENABLE_SYCL)
-  const auto sycl_block = syclcompat::dim3(Bigblock.x, Bigblock.y, Bigblock.z);
-  const auto sycl_grid = syclcompat::dim3(Biggrid.x, Biggrid.y, Biggrid.z);
-
   syclcompat::launch<kernel::GemmComplex<
                       ElementA,
                       LayoutA,
@@ -334,7 +338,7 @@ void GemmComplex(
                       InnerProductOp,
                       kBigMblock,
                       kBigNblock
-                    >>(sycl_grid, sycl_block, 
+                    >>(Biggrid, Bigblock, 
                         problem_size,
                         alpha,
                         tensor_a,
