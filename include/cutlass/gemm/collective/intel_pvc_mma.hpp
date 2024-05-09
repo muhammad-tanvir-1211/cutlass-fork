@@ -183,8 +183,8 @@ struct CollectiveMma<
     (void)smem_buf;
 
     static_assert(is_rmem<FrgTensorD>::value, "D tensor must be rmem resident.");
-    static_assert(is_tuple<typename TensorA::engine_type::iterator::value_type>::value, "A tensor must be tuple iterators.");
-    static_assert(is_tuple<typename TensorB::engine_type::iterator::value_type>::value, "B tensor must be tuple iterators.");
+    static_assert(is_tuple<typename TensorA::engine_type::iterator::value_type>::value, "A tensor must be a tuple iterator.");
+    static_assert(is_tuple<typename TensorB::engine_type::iterator::value_type>::value, "B tensor must be a tuple iterator.");
     static_assert(is_rmem<FrgTensorC>::value, "C tensor must be rmem resident.");
 
     // Tensor to hold input data
@@ -196,7 +196,7 @@ struct CollectiveMma<
     Tensor tBr_view = make_tensor(static_cast<decltype(tBr) &&>(tBr).data(),
                             Shape<Int<VecB>, Int<FragsK>, Int<FragsN>>{});
 
-    // Instantiate the FragsMA object
+    // Instantiate the M MA object
     TiledMma tiled_mma;
 
     //
@@ -340,8 +340,8 @@ struct CollectiveMma<
       Params const& mainloop) 
   {
     // static_assert(is_rmem<FrgTensorD>::value, "D tensor must be rmem resident.");
-    // static_assert(is_tuple<typename TensorA::engine_type::iterator::value_type>::value, "A tensor must be tuple iterators.");
-    // static_assert(is_tuple<typename TensorB::engine_type::iterator::value_type>::value, "B tensor must be tuple iterators.");
+    // static_assert(is_tuple<typename TensorA::engine_type::iterator::value_type>::value, "A tensor must be tuple iterator.");
+    // static_assert(is_tuple<typename TensorB::engine_type::iterator::value_type>::value, "B tensor must be tuple iterator.");
     // static_assert(is_rmem<FrgTensorC>::value, "C tensor must be rmem resident.");
   }
 };
