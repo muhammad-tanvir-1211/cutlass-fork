@@ -265,19 +265,6 @@ public:
                                                   make_stride(Int<DpasM>{}, Int<DpasN>{}));
 
     copy(gmem_tiled_copy_c, accumulators, tCi(_,_,_,l_coord));
-
-    // Epilogue and write to gD
-    // CollectiveEpilogue epilogue{params.epilogue};
-    // epilogue(
-    //   problem_shape_MNKL,
-    //   sg_shape{},
-    //   blk_coord_mnkl,
-    //   accumulators,
-    //   tiled_mma,
-    //   residue_mnk,
-    //   thread_idx,
-    //   smem_buf
-    // );
   }
 };
 

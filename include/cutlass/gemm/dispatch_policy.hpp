@@ -281,8 +281,6 @@ struct MainloopIntelPVCBase {
 };
 
 struct MainloopIntelPVCUnpredicated : MainloopIntelPVCBase{};
-
-struct MainloopIntelPVC : MainloopIntelPVCBase{};
 #endif
 
 //////////////////////////////////////////////////////////////////////////////
