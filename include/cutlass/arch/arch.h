@@ -98,7 +98,6 @@ struct Sm90 {
 };
 
 #if defined(CUTLASS_ENABLE_SYCL)
-
 struct IntelPVC {
   static int const kMinComputeCapability = 0;
 };
