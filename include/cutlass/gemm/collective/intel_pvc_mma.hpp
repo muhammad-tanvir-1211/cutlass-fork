@@ -129,7 +129,7 @@ struct CollectiveMma<
   struct Params {
     using XE_Copy_A = decltype(make_xe_2d_copy<GmemTiledCopyA>(make_tensor(static_cast<ElementA const*>(nullptr), 
                                 repeat_like(StrideA{}, int32_t(0)), StrideA{})));
-    using XE_Copy_B = decltype(make_xe_2d_copy<GmemTiledCopyB>(make_tensor(static_cast<ElementA const*>(nullptr), 
+    using XE_Copy_B = decltype(make_xe_2d_copy<GmemTiledCopyB>(make_tensor(static_cast<ElementB const*>(nullptr), 
                                 repeat_like(StrideB{}, int32_t(0)), StrideB{})));
     XE_Copy_A gmem_tiled_copy_a;
     XE_Copy_B gmem_tiled_copy_b;
@@ -188,8 +188,8 @@ struct CollectiveMma<
     static_assert(is_rmem<FrgTensorC>::value, "C tensor must be rmem resident.");
 
     // Tensor to hold input data
-    Tensor tAr = make_tensor<ushort>(Shape<Int<get<0>(TileShape{}) * FragsK>, Int<1>>{});
-    Tensor tBr = make_tensor<ushort>(Shape<Int<FragsK * get<1>(TileShape{}) / FragsN>, Int<FragsN>>{});
+    Tensor tAr = make_tensor<typename TiledMma::ValTypeA>(Shape<Int<get<0>(TileShape{}) * FragsK>, Int<1>>{});
+    Tensor tBr = make_tensor<typename TiledMma::ValTypeB>(Shape<Int<FragsK * get<1>(TileShape{}) / FragsN>, Int<FragsN>>{});
 
     Tensor tAr_view = make_tensor(static_cast<decltype(tAr) &&>(tAr).data(),
                             Shape<Int<VecA>, Int<FragsM>, Int<FragsK>>{});
