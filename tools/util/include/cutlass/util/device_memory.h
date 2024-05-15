@@ -56,7 +56,6 @@ T* allocate(size_t count = 1) {
   T* ptr = 0;
 
   size_t bytes = 0;
-
   bytes = count * sizeof(T);
 
 #if defined(CUTLASS_ENABLE_SYCL)
