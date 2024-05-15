@@ -76,7 +76,7 @@ struct CollectiveMma {
 #include "cutlass/gemm/collective/sm90_mma_array_tma_gmma_ss_warpspecialized.hpp"
 #include "cutlass/gemm/collective/sm90_mma_tma_gmma_ss_warpspecialized_fp8.hpp"
 
-#if defined(CUTLASS_ENABLE_SYCL)
+#if defined(SYCL_INTEL_TARGET)
 #include "cutlass/gemm/collective/intel_pvc_mma.hpp"
 #endif
 /////////////////////////////////////////////////////////////////////////////////////////////////

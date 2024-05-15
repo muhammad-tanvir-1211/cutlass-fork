@@ -271,7 +271,7 @@ struct MainloopSm90ArrayTmaGmmaWarpSpecialized {
 };
 
 
-#if defined(CUTLASS_ENABLE_SYCL)
+#if defined(SYCL_INTEL_TARGET)
 struct MainloopIntelPVCBase {
   constexpr static int Stages = 1;
   using ArchTag = arch::IntelPVC;
