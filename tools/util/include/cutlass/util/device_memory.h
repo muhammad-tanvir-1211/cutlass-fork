@@ -56,11 +56,10 @@ T* allocate(size_t count = 1) {
   T* ptr = 0;
 
   size_t bytes = 0;
-
   bytes = count * sizeof(T);
 
 #if defined(CUTLASS_ENABLE_SYCL)
-  if (bytes > 0) {
+  if (count > 0) {
     ptr = reinterpret_cast<T*>(syclcompat::malloc(bytes));
     if ((void*)ptr == nullptr) {
       throw std::runtime_error("Failed to allocate memory");
