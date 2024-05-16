@@ -31,6 +31,8 @@
 
 #include "cutlass/gemm/device/gemm.h"
 #include "cutlass/epilogue/collective/default_epilogue.hpp"
+#include "cutlass/epilogue/collective/intel_pvc_epilogue.hpp"
+#include "cutlass/epilogue/fusion/intel_pvc_epilogue.hpp"
 #include "cutlass/gemm/device/gemm_universal.h"
 #include "cutlass/gemm/device/gemm_universal_adapter.h"
 #include "cutlass/gemm/collective/collective_mma.hpp"
@@ -360,26 +362,29 @@ int main(int argc, const char** argv)
           Layout<Shape<_1,_1,_1>>,
           Tile<_32,_64,_32>>;  // Subgroup level-tile
 
-  using DispatchPolicy = cutlass::gemm::MainloopIntelPVCUnpredicated;
+  using GEMMDispatchPolicy = cutlass::gemm::MainloopIntelPVCUnpredicated;
+  using EpilogueDispatchPolicy = cutlass::epilogue::IntelPVCEpilogue;
 
-  using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
-          ElementOutput,                                     // <- data type of output matrix
-          128 / cutlass::sizeof_bits<ElementOutput>::value,  // <- the number of elements per vectorized
-          // memory access. For a byte, it's 16
-          // elements. This becomes the vector width of
-          // math instructions in the epilogue too
-          ElementAccumulator,                                // <- data type of accumulator
-          ElementComputeEpilogue>;  // <- data type for alpha/beta in linear combination function
+  using EpilogueOp = cutlass::epilogue::fusion::LinearCombination<ElementOutput, ElementComputeEpilogue, ElementAccumulator, ElementAccumulator, cutlass::FloatRoundStyle::round_to_nearest>;
 
-  using CollectiveEpilogue = cutlass::epilogue::collective::DefaultEpilogue<
+  using FusionCallBacks = cutlass::epilogue::fusion::FusionCallbacks<EpilogueDispatchPolicy, EpilogueOp, TileShape, EpilogueShape, void, void>;
+  using CollectiveEpilogue = cutlass::epilogue::collective::CollectiveEpilogue<
+          EpilogueDispatchPolicy,
+          TileShape,
+          EpilogueShape,
+          ElementAccumulator,
           cutlass::gemm::TagToStrideC_t<LayoutC>,
+          ElementOutput,
           cutlass::gemm::TagToStrideC_t<LayoutD>,
-          EpilogueOp,
-          cutlass::gemm::EpilogueDefault>;
+          FusionCallBacks,
+          XE_2D_U16x16x16x2x1_LD_N,
+          void, void,
+          XE_2D_U32x8x16x1x1_ST_N,
+          void, void>;
 
 // Mainloop
   using CollectiveMainloop = cutlass::gemm::collective::CollectiveMma<
-          DispatchPolicy,
+          GEMMDispatchPolicy,
           TileShape,
           ElementInputA,
           cutlass::gemm::TagToStrideA_t<LayoutA>,
