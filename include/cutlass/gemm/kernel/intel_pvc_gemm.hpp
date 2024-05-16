@@ -221,6 +221,7 @@ public:
     const int m_coord = BlockIdxX() * get<0>(subgroup_shape);
     const int n_coord = (BlockIdxY() * num_sg + thread_idx / SubgroupSize) * get<1>(subgroup_shape);
     const int l_coord = BlockIdxZ();
+    const auto tile_coord = make_coord(m_coord, n_coord, _, l_coord);
 
     Tensor tAi = params.mainloop.gmem_tiled_copy_a.get_pvc_tensor(make_coord(m_coord, 0, l_coord),
                                                                   make_shape(_1{}, K, L),
@@ -258,13 +259,24 @@ public:
       smem_buf,
       params.mainloop
     );
-    auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_U32x8x16x1x1_ST_N>(make_tensor(params.epilogue.ptr_D, make_shape(M, N, L), params.epilogue.dD));
+    // auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_U32x8x16x1x1_ST_N>(make_tensor(params.epilogue.ptr_D, make_shape(M, N, L), params.epilogue.dD));
 
-    Tensor tCi = gmem_tiled_copy_c.get_pvc_tensor(make_coord(m_coord, n_coord, l_coord),
-                                                  make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
-                                                  make_stride(Int<DpasM>{}, Int<DpasN>{}));
+    // Tensor tCi = gmem_tiled_copy_c.get_pvc_tensor(make_coord(m_coord, n_coord, l_coord),
+    //                                               make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
+    //                                               make_stride(Int<DpasM>{}, Int<DpasN>{}));
 
-    copy(gmem_tiled_copy_c, accumulators, tCi(_,_,_,l_coord));
+    // copy(gmem_tiled_copy_c, accumulators, tCi(_,_,_,l_coord));
+    CollectiveEpilogue epilogue{params.epilogue};
+    epilogue(
+      problem_shape_MNKL,
+      subgroup_shape,
+      tile_coord,
+      accumulators,
+      tiled_mma,
+      residue_mnk,
+      thread_idx,
+      smem_buf
+      );
   }
 };
 

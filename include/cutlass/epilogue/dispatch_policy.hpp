@@ -156,6 +156,10 @@ struct Sm90TmaWarpSpecializedBiasElementwise {
   constexpr static int FragmentSize = FragmentSize_;
 };
 
+#if defined (SYCL_INTEL_TARGET)
+struct IntelPVCEpilogue {};
+#endif
+
 //////////////////////////////////////////////////////////////////////////////
 
 } // namespace cutlass::epilogue
