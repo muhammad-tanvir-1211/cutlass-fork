@@ -232,11 +232,11 @@ public:
   CollectiveEpilogue(Params const& params_)
       : params(params_) {}
 
-  // CUTLASS_DEVICE
-  // bool
-  // is_producer_load_needed() const {
-  //   return fusion_callbacks.is_producer_load_needed();
-  // }
+  CUTLASS_DEVICE
+  bool
+  is_producer_load_needed() const {
+    return fusion_callbacks.is_producer_load_needed();
+  }
 
   template<
     class ProblemShapeMNKL,
