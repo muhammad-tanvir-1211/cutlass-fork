@@ -111,6 +111,16 @@ public:
 
   static constexpr int VecC = CollectiveMainloop::VecC;
 
+  // Kernel level shared memory storage
+  struct SharedStorage {
+    // Mainloop and epilogue don't use smem concurrently since kernel is non-persistent, so we can use a union
+    union TensorStorage {
+      using EpilogueTensorStorage = typename CollectiveEpilogue::TensorStorage;
+
+      EpilogueTensorStorage epilogue;
+    } tensors;
+  };
+
   // Device side arguments
   struct Arguments {
     GemmUniversalMode mode{};
@@ -188,7 +198,7 @@ public:
   void
   operator()(Params const& params, char* smem_buf) {
 
-    (void)smem_buf;
+    SharedStorage& shared_storage = *reinterpret_cast<SharedStorage*>(smem_buf);
 
     // Preconditions
     CUTE_STATIC_ASSERT(is_static<WorkgroupTileShape>::value);
@@ -255,8 +265,7 @@ public:
       params.mainloop
     );
 
-    // copy(gmem_tiled_copy_c, accumulators, tCi(_,_,_,l_coord));
-    CollectiveEpilogue epilogue{params.epilogue};
+    CollectiveEpilogue epilogue{params.epilogue, shared_storage.tensors.epilogue};
     epilogue(
       problem_shape_MNKL,
       subgroup_shape,

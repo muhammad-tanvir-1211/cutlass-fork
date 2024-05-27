@@ -97,27 +97,6 @@ struct FusionCallbacks<
     }
   };
 
-  using Params = Arguments;
-
-  template <class ProblemShape>
-  static constexpr Params
-  to_underlying_arguments(ProblemShape const&, Arguments const& args, void*) {
-    return args;
-  }
-
-  template <class ProblemShape>
-  static size_t
-  get_workspace_size(ProblemShape const&, Arguments const& args) {
-    return 0;
-  }
-
-  template <class ProblemShape>
-  static cutlass::Status
-  initialize_workspace(ProblemShape const& problem_shape, Arguments const& args, void* workspace, cudaStream_t stream, 
-    CudaHostAdapter* cuda_adapter = nullptr) {
-    return cutlass::Status::kSuccess;
-  }
-
   // Ctor inheritance
   using Impl::Impl;
 };
