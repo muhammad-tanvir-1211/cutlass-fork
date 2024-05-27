@@ -113,6 +113,16 @@ public:
 
   static constexpr int VecC = CollectiveMainloop::VecC;
 
+  // Kernel level shared memory storage
+  struct SharedStorage {
+    // Mainloop and epilogue don't use smem concurrently since kernel is non-persistent, so we can use a union
+    union TensorStorage {
+      using EpilogueTensorStorage = typename CollectiveEpilogue::TensorStorage;
+
+      EpilogueTensorStorage epilogue;
+    } tensors;
+  };
+
   // Device side arguments
   struct Arguments {
     GemmUniversalMode mode{};
@@ -196,7 +206,7 @@ public:
   void
   operator()(Params const& params, char* smem_buf) {
 
-    (void)smem_buf;
+    SharedStorage& shared_storage = *reinterpret_cast<SharedStorage*>(smem_buf);
 
     // Preconditions
     CUTE_STATIC_ASSERT(is_static<TileShape>::value);
@@ -259,14 +269,8 @@ public:
       smem_buf,
       params.mainloop
     );
-    // auto gmem_tiled_copy_c = make_xe_2d_copy<XE_2D_U32x8x16x1x1_ST_N>(make_tensor(params.epilogue.ptr_D, make_shape(M, N, L), params.epilogue.dD));
 
-    // Tensor tCi = gmem_tiled_copy_c.get_pvc_tensor(make_coord(m_coord, n_coord, l_coord),
-    //                                               make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
-    //                                               make_stride(Int<DpasM>{}, Int<DpasN>{}));
-
-    // copy(gmem_tiled_copy_c, accumulators, tCi(_,_,_,l_coord));
-    CollectiveEpilogue epilogue{params.epilogue};
+    CollectiveEpilogue epilogue{params.epilogue, shared_storage.tensors.epilogue};
     epilogue(
       problem_shape_MNKL,
       subgroup_shape,

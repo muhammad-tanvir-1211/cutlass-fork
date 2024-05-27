@@ -36,18 +36,15 @@
 
 #include <sycl/sycl.hpp>
 #include "cutlass/cutlass.h"
-// #include "cutlass/arch/barrier.h"
 #include "cutlass/epilogue/dispatch_policy.hpp"
 #include "cutlass/epilogue/collective/collective_epilogue.hpp"
 #include "cutlass/epilogue/collective/detail.hpp"
-// #include "cutlass/epilogue/thread/scale_type.h"
 #include "cutlass/epilogue/fusion/callbacks.hpp"
-// #include "cutlass/epilogue/fusion/sm90_callbacks_tma_warpspecialized.hpp"
+#include "cutlass/epilogue/fusion/sm90_visitor_tma_warpspecialized.hpp"
 #include "cutlass/detail/layout.hpp"
-// #include "cutlass/trace.h"
+
 
 #include "cute/tensor.hpp"
-// #include "cutlass/cuda_host_adapter.hpp"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -114,6 +111,8 @@ public:
   using ElementOutput = typename FusionCallbacks::ElementOutput;
   using ElementCompute = typename FusionCallbacks::ElementCompute;
 
+  static constexpr int SubgroupSize = DispatchPolicy::SubgroupSize;
+
   static_assert(!is_layout<EpilogueTile>::value && is_tuple<EpilogueTile>::value, "EpilogueTile must be a cute::Tile or cute::Shape");
   static_assert(cute::rank(CtaTileMNK{}) == 3, "CtaTileMNK must be rank-3: [CTA_M, CTA_N, CTA_K]");
   static_assert(cute::rank(EpilogueTile{}) == 2, "EpilogueTile must be rank-2: [EPI_TILE_M, EPI_TILE_N]");
@@ -131,6 +130,38 @@ private:
 
 public:
 
+  using EmptyType = cute::tuple<>;
+  using SmemCStorage = cute::conditional_t<is_source_supported,
+                         array_aligned<ElementCompute, 0, 0>,
+                         EmptyType>;
+  using SmemDStorage = cute::conditional_t<is_destination_supported,
+                         array_aligned<ElementCompute, 0, 0>,
+                         EmptyType>;
+
+  struct TensorStorageImpl: cute::tuple<SmemCStorage, SmemDStorage> {
+    using Base = cute::tuple<SmemCStorage, SmemDStorage>;
+
+    constexpr decltype(auto)
+    smem_C() {
+      return cute::get<0>(static_cast<Base &>(*this));
+    }
+
+    constexpr decltype(auto)
+    smem_D() {
+      return cute::get<1>(static_cast<Base &>(*this));
+    }
+
+    using FusionStorage = typename FusionCallbacks::SharedStorage;
+    FusionStorage thread;
+  };
+
+  struct SharedStorage {
+    using TensorStorage = TensorStorageImpl;
+
+    TensorStorage tensors;
+  };
+  using TensorStorage = typename SharedStorage::TensorStorage;
+
   // Host side epilogue arguments
   struct Arguments {
     typename FusionCallbacks::Arguments thread{};
@@ -143,10 +174,10 @@ public:
   // Device side epilogue params
   struct Params {
     using XE_Copy_C = decltype(make_xe_2d_copy<CopyOpG2R>(
-        make_tensor(make_gmem_ptr(static_cast<ElementC const*>(nullptr)),
+        make_tensor(static_cast<ElementC const*>(nullptr),
             repeat_like(StrideC{}, int32_t(0)), StrideC{})));
     using XE_Copy_D = decltype(make_xe_2d_copy<CopyOpR2G>(
-        make_tensor(make_gmem_ptr(static_cast<ElementD const*>(nullptr)),
+        make_tensor(static_cast<ElementD const*>(nullptr),
             repeat_like(StrideD{}, int32_t(0)), StrideD{})));
 
     typename FusionCallbacks::Params thread{};
@@ -170,13 +201,13 @@ public:
 
     typename Params::XE_Copy_C xe_load_c = {};
     if constexpr (is_source_supported) {
-      Tensor tensor_c = make_tensor(make_gmem_ptr(args.ptr_C), make_layout(make_shape(M,N,L), args.dC));
+      Tensor tensor_c = make_tensor(args.ptr_C, make_layout(make_shape(M,N,L), args.dC));
       xe_load_c = make_xe_2d_copy<CopyOpG2R>(tensor_c);
     }
 
     typename Params::XE_Copy_D xe_store_d = {};
     if constexpr (is_destination_supported) {
-      Tensor tensor_d = make_tensor(make_gmem_ptr(args.ptr_D), make_layout(make_shape(M,N,L), args.dD));
+      Tensor tensor_d = make_tensor(args.ptr_D, make_layout(make_shape(M,N,L), args.dD));
       xe_store_d = make_xe_2d_copy<CopyOpR2G>(tensor_d);
     }
 
@@ -190,14 +221,14 @@ public:
   template <class ProblemShape>
   static size_t
   get_workspace_size(ProblemShape const& problem_shape, Arguments const& args) {
-    return FusionCallbacks::get_workspace_size(problem_shape, args.thread);
+    return 0;
   }
 
   template <class ProblemShape>
   static cutlass::Status
   initialize_workspace(ProblemShape const& problem_shape, Arguments const& args, void* workspace, cudaStream_t stream, 
     CudaHostAdapter* cuda_adapter = nullptr) {
-    return FusionCallbacks::initialize_workspace(problem_shape, args.thread, workspace, stream, cuda_adapter);
+    return Status::kSuccess;
   }
 
   template <class ProblemShape>
@@ -229,8 +260,8 @@ public:
   }
 
   CUTLASS_HOST_DEVICE
-  CollectiveEpilogue(Params const& params_)
-      : params(params_) {}
+  CollectiveEpilogue(Params const& params_, TensorStorage const& shared_storage_)
+      : params(params_), fusion_callbacks(params_.thread, shared_storage_.thread) {}
 
   CUTLASS_DEVICE
   bool
@@ -259,15 +290,78 @@ public:
     
     (void) tiled_mma;
     (void) residue_mnk;
-    (void) thread_idx;
     (void) smem;
     using namespace cute;
+
+    static constexpr int DpasM = get<0>(shape(typename TiledMma::LayoutA_TV{})); // rows per dpas operation per sub_group for Matrix A
+    static constexpr int DpasN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
+
+    static constexpr int FragsM = get<0>(EpilogueTile{}) / DpasM; // A frags per sub_group
+    static constexpr int FragsN = get<1>(EpilogueTile{}) / DpasN; // B frags per sub_group
+
+    static constexpr int FragmentSize = (DpasN * DpasM) / SubgroupSize;
 
     // Indexing variables
     auto [M, N, K, L] = problem_shape_mnkl;
     auto [m_coord, n_coord, k_coord, l_coord] = tile_coord_mnkl;
 
-    printf("PVC Epilogue\n");
+    bool is_C_load_needed = is_source_supported && fusion_callbacks.is_C_load_needed();
+
+    Tensor trC = make_tensor<typename TiledMma::ValTypeC>(Shape<Int<FragmentSize>, Int<FragsM>, Int<FragsN>>{});
+    Tensor trD = make_tensor<typename TiledMma::ValTypeD>(Shape<Int<FragmentSize>, Int<FragsM>, Int<FragsN>>{});
+    Tensor tOuti = params.xe_store_d.get_pvc_tensor(make_coord(m_coord, n_coord, 0),
+                                                  make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
+                                                  make_stride(Int<DpasM>{}, Int<DpasN>{}));
+
+    Tensor mD_crd = make_identity_tensor(make_shape(M,N));
+    Tensor cD = local_tile(mD_crd, take<0,2>(TileShapeMNK{}), make_coord(m_coord, n_coord));
+    // Get the fusion callbacks
+    constexpr bool RefSrc = true; // Register tensors reference R2S copy src layout
+    auto residue_mn = make_coord(M, N);
+    auto cst_args = cutlass::epilogue::fusion::detail::ConsumerStoreArgs{
+                      problem_shape_mnkl,
+                      TileShapeMNK{},
+                      tile_coord_mnkl,
+                      residue_mn,
+                      EpilogueTile{},
+                      params.xe_load_c,
+                      thread_idx,
+                      cD,
+                      cD/*tRS_cD*/,
+                      trC
+                    };
+    auto cst_callbacks = fusion_callbacks.template get_consumer_store_callbacks<RefSrc>(cst_args);
+
+    cst_callbacks.begin();
+
+    // if (is_C_load_needed) {
+    //   copy(params.xe_load_c, tOuti(_,_,_,l_coord), trC);
+    // }
+
+    auto acc_frag = recast<Array<ElementOutput, FragmentSize>>(accumulators);
+    auto c_frag = recast<Array<ElementC, FragmentSize>>(trC);
+    auto trD_frag = recast<Array<ElementOutput, FragmentSize>>(trD);
+
+    CUTLASS_PRAGMA_UNROLL
+    for (int epi_n = 0; epi_n < FragsN; epi_n++) {
+      CUTLASS_PRAGMA_UNROLL
+      for (int epi_m = 0; epi_m < FragsM; epi_m++) {
+
+        cst_callbacks.previsit(epi_m, epi_n, 0, is_C_load_needed);
+
+        auto acc_frag_mn = acc_frag(_, epi_m, epi_n);
+        auto trD_frag_mn = trD_frag(_, epi_m, epi_n);
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int epi_v = 0; epi_v < FragmentSize; ++epi_v) {
+          trD_frag_mn(epi_v) = cst_callbacks.visit(acc_frag_mn(epi_v), epi_v, epi_m, epi_n);
+        }
+      }
+    }
+
+    cst_callbacks.end();
+
+    copy(params.xe_store_d, trD, tOuti(_,_,_,l_coord));
 
   }
 
