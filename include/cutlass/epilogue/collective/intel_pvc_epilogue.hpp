@@ -334,9 +334,10 @@ public:
 
     cst_callbacks.begin();
 
-    // if (is_C_load_needed) {
-    //   copy(params.xe_load_c, tOuti(_,_,_,l_coord), trC);
-    // }
+    if (is_C_load_needed) {
+      Tensor trC_recast = recast<ushort>(trC);
+      copy(params.xe_load_c, tOuti(_,_,_,l_coord), trC_recast);
+    }
 
     auto acc_frag = recast<Array<ElementOutput, FragmentSize>>(accumulators);
     auto c_frag = recast<Array<ElementC, FragmentSize>>(trC);
