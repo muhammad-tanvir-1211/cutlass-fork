@@ -233,11 +233,11 @@ public:
     const int l_coord = BlockIdxZ();
     const auto tile_coord = make_coord(m_coord, n_coord, _, l_coord);
 
-    Tensor tAi = params.mainloop.gmem_tiled_copy_a.get_pvc_tensor(make_coord(m_coord, 0, l_coord),
+    Tensor tAi = params.mainloop.gmem_tiled_copy_a.get_pvc_tensor(make_coord(m_coord, 0, 0),
                                                                   make_shape(_1{}, K, L),
                                                                   make_stride(Int<FragsM * DpasM>{}, _1{}));
 
-    Tensor tBi = params.mainloop.gmem_tiled_copy_b.get_pvc_tensor(make_coord(0, n_coord, l_coord),
+    Tensor tBi = params.mainloop.gmem_tiled_copy_b.get_pvc_tensor(make_coord(0, n_coord, 0),
                                                                   make_shape(K, Int<FragsN>{}, L),
                                                                   make_stride(_1{}, Int<DpasN>{}));
 
@@ -250,7 +250,7 @@ public:
     // Allocate the tiled_mma and the accumulators for the (M,N) subgroup_shape
     TiledMma tiled_mma;
 
-    Tensor accumulators = make_tensor<float>(Shape<Int<VecC>, Int<FragsM>, Int<FragsN>>{});
+    Tensor accumulators = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM>, Int<FragsN>>{});
     clear(accumulators);
 
     auto k_tile_iter  = cute::make_coord_iterator(make_shape(K / get<2>(subgroup_shape)));
