@@ -116,7 +116,11 @@ struct Sm90SrcFetch : Sm90VisitorImpl<> {
     template <typename ElementAccumulator, int FragmentSize>
     CUTLASS_DEVICE Array<typename SrcTensor::value_type, FragmentSize>
     visit(Array<ElementAccumulator, FragmentSize> const& frg_acc, int epi_v, int epi_m, int epi_n) {
+#ifdef SYCL_INTEL_TARGET
+      return recast<Array<typename SrcTensor::value_type, FragmentSize>>(tCrC)(epi_v, epi_m, epi_n);
+#else
       return recast<Array<typename SrcTensor::value_type, FragmentSize>>(tCrC)(epi_v);
+#endif
     }
 
   };

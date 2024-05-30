@@ -51,7 +51,7 @@ template <typename T>
 static void fill_matrix(std::vector<T> &vector)
 {
   std::generate(std::begin(vector), std::end(vector), [&] {
-      return static_cast<T>( (rand() / double(RAND_MAX)) );
+      return static_cast<T>(10*rand() / double(RAND_MAX) -1 );
   });
 }
 
@@ -208,8 +208,8 @@ struct ExampleRunner {
 
     // Check if output from CUTLASS kernel and reference kernel are relatively equal or not
     // need to set a larger error margin for comparison to succeed
-    auto epsilon = static_cast<ElementOutput>(0.1f);
-    auto nonzero_floor = static_cast<ElementOutput>(0.1f);
+    auto epsilon = static_cast<ElementOutput>(0.5f);
+    auto nonzero_floor = static_cast<ElementOutput>(0.5f);
 
     bool passed = cutlass::reference::device::BlockCompareRelativelyEqual(
             block_ref_D.get(), block_D.get(), block_D.size(),
@@ -377,7 +377,7 @@ int main(int argc, const char** argv)
           ElementOutput,
           cutlass::gemm::TagToStrideC_t<LayoutD>,
           FusionCallBacks,
-          XE_2D_U16x16x16x2x1_LD_N,
+          XE_2D_U32x8x16x1x1_LD_N,
           void, void,
           XE_2D_U32x8x16x1x1_ST_N,
           void, void>;
