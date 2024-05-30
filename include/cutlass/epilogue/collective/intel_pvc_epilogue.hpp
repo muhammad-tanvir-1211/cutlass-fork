@@ -131,12 +131,8 @@ private:
 public:
 
   using EmptyType = cute::tuple<>;
-  using SmemCStorage = cute::conditional_t<is_source_supported,
-                         array_aligned<ElementCompute, 0, 0>,
-                         EmptyType>;
-  using SmemDStorage = cute::conditional_t<is_destination_supported,
-                         array_aligned<ElementCompute, 0, 0>,
-                         EmptyType>;
+  using SmemCStorage = EmptyType;
+  using SmemDStorage = EmptyType;
 
   struct TensorStorageImpl: cute::tuple<SmemCStorage, SmemDStorage> {
     using Base = cute::tuple<SmemCStorage, SmemDStorage>;
