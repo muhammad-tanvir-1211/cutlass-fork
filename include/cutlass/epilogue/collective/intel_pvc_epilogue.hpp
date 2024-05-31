@@ -303,11 +303,12 @@ public:
 
     bool is_C_load_needed = is_source_supported && fusion_callbacks.is_C_load_needed();
 
-    Tensor trC = make_tensor<typename TiledMma::ValTypeC>(Shape<Int<FragmentSize>, Int<FragsM>, Int<FragsN>>{});
+    Tensor trC = make_tensor<typename TiledMma::ValTypeC>(Shape<Int<FragmentSize>>{});
     Tensor tOuti = params.xe_store_d.get_pvc_tensor(make_coord(m_coord, n_coord, 0),
                                                   make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
                                                   make_stride(Int<DpasM>{}, Int<DpasN>{}));
 
+    Tensor rw_coord = tOuti(_,_,_,l_coord);
     Tensor mD_crd = make_identity_tensor(make_shape(M,N));
     Tensor cD = local_tile(mD_crd, take<0,2>(TileShapeMNK{}), make_coord(m_coord, n_coord));
     // Get the fusion callbacks
@@ -329,16 +330,16 @@ public:
 
     cst_callbacks.begin();
 
-    if (is_C_load_needed) {
-      copy(params.xe_load_c, tOuti(_,_,_,l_coord), trC);
-    }
-
     auto acc_frag = recast<Array<ElementOutput, FragmentSize>>(accumulators);
 
     CUTLASS_PRAGMA_UNROLL
     for (int epi_n = 0; epi_n < FragsN; epi_n++) {
       CUTLASS_PRAGMA_UNROLL
       for (int epi_m = 0; epi_m < FragsM; epi_m++) {
+
+        if (is_C_load_needed) {
+          copy(params.xe_load_c, rw_coord(_, epi_m * FragsM, epi_n * FragsN), trC);
+        }
 
         cst_callbacks.previsit(epi_m, epi_n, 0, is_C_load_needed);
 
@@ -353,7 +354,7 @@ public:
 
     cst_callbacks.end();
 
-    copy(params.xe_store_d, accumulators, tOuti(_,_,_,l_coord));
+    copy(params.xe_store_d, accumulators, rw_coord);
 
   }
 
