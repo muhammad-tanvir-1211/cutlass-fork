@@ -55,8 +55,8 @@ namespace collective {
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <
-  class CtaTileMNK_,   //     (CTA_M,CTA_N,CTA_K)
-  class EpilogueTile_, // (EPI_TILE_M,EPI_TILE_N)
+  class CtaTileMNK_, 
+  class EpilogueTile_, 
   class ElementC_,
   class StrideC_,
   class ElementD_,
@@ -100,10 +100,10 @@ public:
   using StrideD = StrideD_;
   using CopyOpG2R = CopyOpG2R_;
   using SmemLayoutAtomC = SmemLayoutAtomC_;
-  using CopyOpS2R = void;
+  using CopyOpS2R = CopyOpS2R_;
   using CopyOpR2G = CopyOpR2G_;
-  using SmemLayoutAtomD = void; // SmemLayoutAtomD_;
-  using CopyOpR2S = void;
+  using SmemLayoutAtomD = SmemLayoutAtomD_;
+  using CopyOpR2S = CopyOpR2S_;
 
   using ThreadEpilogueOp = typename fusion::FusionCallbacksTraits<FusionCallbacks>::Operation;
   using GmemTiledCopyC = CopyOpG2R;
@@ -120,6 +120,11 @@ public:
   static_assert(size<1>(CtaTileMNK{}) % size<1>(shape(EpilogueTile{})) == 0, "EPI_TILE_N must divide CTA_N");
   static_assert(cute::rank(StrideC{}) == 3, "StrideC must be rank-3: [M, N, L]");
   static_assert(cute::rank(StrideD{}) == 3, "StrideD must be rank-3: [M, N, L]");
+
+  static_assert(std::is_same_v<CopyOpS2R, void>, "Intel PVC does not support shared memory");
+  static_assert(std::is_same_v<CopyOpR2S, void>, "Intel PVC does not support shared memory");
+  static_assert(std::is_same_v<SmemLayoutAtomC, void>, "Intel PVC does not support shared memory");
+  static_assert(std::is_same_v<SmemLayoutAtomD, void>, "Intel PVC does not support shared memory");
 
 private:
   constexpr static bool is_source_supported = not cute::is_void_v<ElementC>;
@@ -232,26 +237,6 @@ public:
   can_implement(
       ProblemShape const& problem_shape,
       [[maybe_unused]] Arguments const& args) {
-    // constexpr int tma_alignment_bits = 128;
-    // auto problem_shape_MNKL = append<4>(problem_shape, 1);
-    // auto [M,N,K,L] = problem_shape_MNKL;
-
-    // bool implementable = true;
-    // if constexpr (is_destination_supported) {
-    //   constexpr int min_tma_aligned_elements_D = tma_alignment_bits / cutlass::sizeof_bits<ElementD>::value;
-    //   implementable = implementable && cutlass::detail::check_alignment<min_tma_aligned_elements_D>(cute::make_shape(M,N,L), StrideD{});
-    // }
-
-    // if constexpr (not cute::is_void_v<ElementC>) {
-    //   constexpr int min_tma_aligned_elements_C = tma_alignment_bits / cutlass::sizeof_bits<ElementC>::value;
-    //   implementable = implementable && cutlass::detail::check_alignment<min_tma_aligned_elements_C>(cute::make_shape(M,N,L), StrideC{});
-    // }
-
-    // if (!implementable) {
-    //   CUTLASS_TRACE_HOST("  CAN IMPLEMENT: Problem Size doesn't meet the minimum alignment requirements for TMA.\n");
-    // }
-
-    // return implementable;
     return true;
   }
 
@@ -324,7 +309,7 @@ public:
                       params.xe_load_c,
                       thread_idx,
                       cD,
-                      cD/*tRS_cD*/,
+                      cD,
                       trC
                     };
     auto cst_callbacks = fusion_callbacks.template get_consumer_store_callbacks<RefSrc>(cst_args);
