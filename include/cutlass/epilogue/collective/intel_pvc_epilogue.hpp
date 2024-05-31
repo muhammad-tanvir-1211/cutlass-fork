@@ -340,7 +340,7 @@ public:
       for (int epi_m = 0; epi_m < FragsM; epi_m++) {
 
         if (is_C_load_needed) {
-          copy(params.xe_load_c, rw_coord(_, epi_m * FragsM, epi_n * FragsN), trC);
+          copy(params.xe_load_c, rw_coord(_, epi_m, epi_n), trC);
         }
 
         cst_callbacks.previsit(epi_m, epi_n, 0, is_C_load_needed);
@@ -352,7 +352,7 @@ public:
           trD_frag(epi_v) = cst_callbacks.visit(acc_frag_mn(epi_v), epi_v, epi_m, epi_n);
         }
         
-        copy(params.xe_store_d, trD, rw_coord(_, epi_m * FragsM, epi_n * FragsN));
+        copy(params.xe_store_d, trD, rw_coord(_, epi_m, epi_n));
       }
     }
 
