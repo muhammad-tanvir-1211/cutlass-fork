@@ -304,6 +304,7 @@ public:
     bool is_C_load_needed = is_source_supported && fusion_callbacks.is_C_load_needed();
 
     Tensor trC = make_tensor<typename TiledMma::ValTypeC>(Shape<Int<FragmentSize>>{});
+    Tensor trD = make_tensor<typename TiledMma::ValTypeD>(Shape<Int<FragmentSize>>{});
     Tensor tOuti = params.xe_store_d.get_pvc_tensor(make_coord(m_coord, n_coord, 0),
                                                   make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
                                                   make_stride(Int<DpasM>{}, Int<DpasN>{}));
@@ -331,6 +332,7 @@ public:
     cst_callbacks.begin();
 
     auto acc_frag = recast<Array<ElementOutput, FragmentSize>>(accumulators);
+    auto trD_frag = recast<Array<ElementOutput, FragmentSize>>(trD);
 
     CUTLASS_PRAGMA_UNROLL
     for (int epi_n = 0; epi_n < FragsN; epi_n++) {
@@ -347,14 +349,14 @@ public:
 
         CUTLASS_PRAGMA_UNROLL
         for (int epi_v = 0; epi_v < FragmentSize; ++epi_v) {
-          acc_frag_mn(epi_v) = cst_callbacks.visit(acc_frag_mn(epi_v), epi_v, epi_m, epi_n);
+          trD_frag(epi_v) = cst_callbacks.visit(acc_frag_mn(epi_v), epi_v, epi_m, epi_n);
         }
+        
+        copy(params.xe_store_d, trD, rw_coord(_, epi_m * FragsM, epi_n * FragsN));
       }
     }
 
     cst_callbacks.end();
-
-    copy(params.xe_store_d, accumulators, rw_coord);
 
   }
 
