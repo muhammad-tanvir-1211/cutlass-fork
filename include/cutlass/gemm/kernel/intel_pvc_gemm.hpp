@@ -233,6 +233,14 @@ public:
     const int l_coord = BlockIdxZ();
     const auto tile_coord = make_coord(m_coord, n_coord, _, l_coord);
 
+    Tensor tAi = params.mainloop.gmem_tiled_copy_a.get_pvc_tensor(make_coord(m_coord, 0, 0),
+                                                                  make_shape(_1{}, K, L),
+                                                                  make_stride(Int<FragsM * DpasM>{}, _1{}));
+
+    Tensor tBi = params.mainloop.gmem_tiled_copy_b.get_pvc_tensor(make_coord(0, n_coord, 0),
+                                                                  make_shape(K, Int<FragsN>{}, L),
+                                                                  make_stride(_1{}, Int<DpasN>{}));
+
     // Compute tile residues for predication
     auto m_max_coord = M - get<0>(subgroup_shape) * m_coord;                             // M - SUB_M * m_coord
     auto n_max_coord = N - get<1>(subgroup_shape) * n_coord;                             // N - SUB_N * n_coord
@@ -247,14 +255,6 @@ public:
 
     auto k_tile_iter  = cute::make_coord_iterator(make_shape(K / get<2>(subgroup_shape)));
     int  k_tile_count = K / get<2>(subgroup_shape);
-{
-    Tensor tAi = params.mainloop.gmem_tiled_copy_a.get_pvc_tensor(make_coord(m_coord, 0, 0),
-                                                                  make_shape(_1{}, K, L),
-                                                                  make_stride(Int<FragsM * DpasM>{}, _1{}));
-
-    Tensor tBi = params.mainloop.gmem_tiled_copy_b.get_pvc_tensor(make_coord(0, n_coord, 0),
-                                                                  make_shape(K, Int<FragsN>{}, L),
-                                                                  make_stride(_1{}, Int<DpasN>{}));
 
     // Perform the collective scoped MMA
     CollectiveMainloop collective_mma;
@@ -269,7 +269,7 @@ public:
       smem_buf,
       params.mainloop
     );
-}
+
     CollectiveEpilogue epilogue{params.epilogue, shared_storage.tensors.epilogue};
     epilogue(
       problem_shape_MNKL,
