@@ -115,12 +115,8 @@ public:
 
   // Kernel level shared memory storage
   struct SharedStorage {
-    // Mainloop and epilogue don't use smem concurrently since kernel is non-persistent, so we can use a union
-    union TensorStorage {
-      using EpilogueTensorStorage = typename CollectiveEpilogue::TensorStorage;
-
-      EpilogueTensorStorage epilogue;
-    } tensors;
+    using EpilogueTensorStorage = typename CollectiveEpilogue::TensorStorage;
+    EpilogueTensorStorage epilogue;
   };
 
   // Device side arguments
@@ -270,7 +266,7 @@ public:
       params.mainloop
     );
 
-    CollectiveEpilogue epilogue{params.epilogue, shared_storage.tensors.epilogue};
+    CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
     epilogue(
       problem_shape_MNKL,
       subgroup_shape,

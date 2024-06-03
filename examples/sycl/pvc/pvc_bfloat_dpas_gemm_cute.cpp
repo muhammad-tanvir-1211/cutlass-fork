@@ -51,7 +51,7 @@ template <typename T>
 static void fill_matrix(std::vector<T> &vector)
 {
   std::generate(std::begin(vector), std::end(vector), [&] {
-      return static_cast<T>(rand() / double(RAND_MAX) );
+      return static_cast<T>( 2 * (rand() / double(RAND_MAX)) -1 );
   });
 }
 
