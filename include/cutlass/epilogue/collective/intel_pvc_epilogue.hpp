@@ -254,6 +254,228 @@ public:
     class ProblemShapeMNKL,
     class TileShapeMNK,
     class TileCoordMNKL,
+    class TiledMma,
+    class RegC
+  >
+  CUTLASS_DEVICE void
+  load(
+      ProblemShapeMNKL problem_shape_mnkl,
+      [[maybe_unused]] TileShapeMNK tile_shape_MNK,
+      TileCoordMNKL tile_coord_mnkl,
+      [[maybe_unused]] TiledMma tiled_mma,
+      [[maybe_unused]] int thread_idx,
+      RegC& trC) {
+
+    using namespace cute;
+
+    static constexpr int DpasM = get<0>(shape(typename TiledMma::LayoutA_TV{})); // rows per dpas operation per sub_group for Matrix A
+    static constexpr int DpasN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
+
+    static constexpr int FragsM = get<0>(EpilogueTile{}) / DpasM; // A frags per sub_group
+    static constexpr int FragsN = get<1>(EpilogueTile{}) / DpasN; // B frags per sub_group
+
+    static constexpr int FragmentSize = (DpasN * DpasM) / SubgroupSize;
+
+    auto [M, N, K, L] = problem_shape_mnkl;
+    auto [m_coord, n_coord, k_coord, l_coord] = tile_coord_mnkl;
+
+    auto residue_mn = make_coord(M,N);
+
+    Tensor load_coord = params.xe_store_d.get_pvc_tensor(make_coord(m_coord, n_coord, 0),
+                                                  make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
+                                                  make_stride(Int<DpasM>{}, Int<DpasN>{}));
+
+    // Get the fusion callbacks for the producer load warp
+    auto pld_args = cutlass::epilogue::fusion::detail::ProducerLoadArgs{
+                      problem_shape_mnkl,
+                      CtaTileMNK{},
+                      tile_coord_mnkl,
+                      residue_mn,
+                      EpilogueTile{},
+                      thread_idx
+                    };
+    auto pld_callbacks = fusion_callbacks.get_producer_load_callbacks(pld_args);
+    bool is_C_load_needed = is_source_supported && fusion_callbacks.is_C_load_needed();
+
+    if(is_C_load_needed) {
+      copy(params.xe_load_c, load_coord(_,_,_,l_coord)(_,0,0), trC);
+    }
+  }
+
+  template<
+    int FragmentSize,
+    class ProblemShapeMNKL,
+    class TileShapeMNK,
+    class TileCoordMNKL,
+    class Accumulator,
+    class ResidueMNK,
+    class ReadCoord,
+    class WriteCoord,
+    class OutCoord,
+    class ComputeReg,
+    class DoubelBufReg,
+    class OutReg
+  >
+  CUTLASS_DEVICE void 
+  compute(
+      ProblemShapeMNKL problem_shape_mnkl,
+      [[maybe_unused]] TileShapeMNK tile_shape_MNK,
+      TileCoordMNKL tile_coord_mnkl,
+      Accumulator accumulators, 
+      ResidueMNK residue_mn,
+      ReadCoord read_coord,
+      WriteCoord write_coord,
+      OutCoord cD,
+      ComputeReg& regC,
+      DoubelBufReg& regC_db,
+      OutReg regD,
+      const int thread_idx,
+      const int epi_m,
+      const int epi_n,
+      const bool is_C_load_needed) {
+    auto cst_args = cutlass::epilogue::fusion::detail::ConsumerStoreArgs{
+                      problem_shape_mnkl,
+                      TileShapeMNK{},
+                      tile_coord_mnkl,
+                      residue_mn,
+                      EpilogueTile{},
+                      params.xe_load_c,
+                      thread_idx,
+                      cD,
+                      cD,
+                      regC
+                    };
+
+    constexpr bool RefSrc = true; // Register tensors reference R2S copy src layout
+    auto cst_callbacks = fusion_callbacks.template get_consumer_store_callbacks<RefSrc>(cst_args);
+
+    cst_callbacks.begin();
+
+    if (is_C_load_needed) {
+      copy(params.xe_load_c, read_coord, regC_db);
+    }
+
+    cst_callbacks.previsit(epi_m, epi_n, 0, is_C_load_needed);
+
+    auto regD_frag = recast<Array<ElementOutput, FragmentSize>>(regD);
+
+    auto acc_frag_mn = recast<Array<ElementOutput, FragmentSize>>(accumulators)(_, epi_m, epi_n);
+
+    CUTLASS_PRAGMA_UNROLL
+    for (int epi_v = 0; epi_v < FragmentSize; ++epi_v) {
+      regD_frag(epi_v) = cst_callbacks.visit(acc_frag_mn(epi_v), epi_v, epi_m, epi_n);
+    }
+    
+    copy(params.xe_store_d, regD, write_coord);
+
+    cst_callbacks.end();
+  }
+
+  template<
+    class ProblemShapeMNKL,
+    class TileShapeMNK,
+    class TileCoordMNKL,
+    class Accumulator,
+    class TiledMma,
+    class ResidueMNK,
+    class RegC
+  >
+  CUTLASS_DEVICE void
+  store(
+      ProblemShapeMNKL problem_shape_mnkl,
+      [[maybe_unused]] TileShapeMNK tile_shape_MNK,
+      TileCoordMNKL tile_coord_mnkl,
+      Accumulator accumulators, 
+      [[maybe_unused]] TiledMma tiled_mma,
+      ResidueMNK residue_mnk,
+      RegC trC,
+      int thread_idx,
+      char*) {
+
+    using namespace cute;
+
+    static constexpr int DpasM = get<0>(shape(typename TiledMma::LayoutA_TV{})); // rows per dpas operation per sub_group for Matrix A
+    static constexpr int DpasN = get<1>(shape(typename TiledMma::LayoutB_TV{})); // cols per dpas operation per sub_group for Matrix B
+
+    static constexpr int FragsM = get<0>(EpilogueTile{}) / DpasM; // A frags per sub_group
+    static constexpr int FragsN = get<1>(EpilogueTile{}) / DpasN; // B frags per sub_group
+
+    static constexpr int FragmentSize = (DpasN * DpasM) / SubgroupSize;
+
+    // Indexing variables
+    auto [M, N, K, L] = problem_shape_mnkl;
+    auto [m_coord, n_coord, k_coord, l_coord] = tile_coord_mnkl;
+
+    bool is_C_load_needed = is_source_supported && fusion_callbacks.is_C_load_needed();
+
+    Tensor trC_db = make_tensor<typename TiledMma::ValTypeC>(Shape<Int<FragmentSize>>{});
+    Tensor trD = make_tensor<typename TiledMma::ValTypeD>(Shape<Int<FragmentSize>>{});
+    Tensor trD_db = make_tensor<typename TiledMma::ValTypeD>(Shape<Int<FragmentSize>>{});
+    Tensor tOuti = params.xe_store_d.get_pvc_tensor(make_coord(m_coord, n_coord, 0),
+                                                  make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
+                                                  make_stride(Int<DpasM>{}, Int<DpasN>{}));
+
+    Tensor rw_coord = tOuti(_,_,_,l_coord);
+    Tensor mD_crd = make_identity_tensor(make_shape(M,N));
+    Tensor cD = local_tile(mD_crd, take<0,2>(TileShapeMNK{}), make_coord(m_coord, n_coord));
+
+    auto residue_mn = make_coord(M, N);
+
+    constexpr int loop_limit = (FragsM * FragsN) / 2;
+    int epi_m_curr = 0, epi_m_next = 0;
+    int epi_n_curr = 0, epi_n_next = 0;
+    int epi_idx_curr = 0, epi_idx_next = 1;
+
+    CUTLASS_PRAGMA_UNROLL
+    for (int idx = 0; idx < loop_limit - 1; idx++) {
+
+      epi_m_curr = epi_idx_curr % FragsM;
+      epi_n_curr = epi_idx_curr++ / FragsM;
+
+      epi_m_next = epi_idx_next % FragsM;
+      epi_n_next = epi_idx_next++ / FragsM;
+
+      compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
+                            accumulators, residue_mnk, rw_coord(_, epi_m_next, epi_n_next), 
+                            rw_coord(_, epi_m_curr, epi_n_curr), cD, trC, trC_db, trD, thread_idx, 
+                            epi_m_curr, epi_n_curr, is_C_load_needed);
+
+      epi_m_curr = epi_idx_curr % FragsM;
+      epi_n_curr = epi_idx_curr++ / FragsM;
+
+      epi_m_next = epi_idx_next % FragsM;
+      epi_n_next = epi_idx_next++ / FragsM;
+
+      compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
+                            accumulators, residue_mnk, rw_coord(_, epi_m_next, epi_n_next), 
+                            rw_coord(_, epi_m_curr, epi_n_curr), cD, trC_db, trC, trD_db, thread_idx, 
+                            epi_m_curr, epi_n_curr, is_C_load_needed);
+    }
+
+    epi_m_curr = epi_idx_curr % FragsM;
+    epi_n_curr = epi_idx_curr++ / FragsM;
+
+    epi_m_next = epi_idx_next % FragsM;
+    epi_n_next = epi_idx_next++ / FragsM;
+
+    compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
+                          accumulators, residue_mnk, rw_coord(_, epi_m_next, epi_n_next), 
+                          rw_coord(_, epi_m_curr, epi_n_curr), cD, trC, trC_db, trD, thread_idx, 
+                          epi_m_curr, epi_n_curr, is_C_load_needed);
+
+    epi_m_curr = epi_idx_curr % FragsM;
+    epi_n_curr = epi_idx_curr++ / FragsM;
+
+    compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
+                          accumulators, residue_mnk, rw_coord(_, epi_m_next, epi_n_next), 
+                          rw_coord(_, epi_m_curr, epi_n_curr), cD, trC_db, trC, trD_db, thread_idx, 
+                          epi_m_curr, epi_n_curr, false);
+  }
+
+  template<
+    class ProblemShapeMNKL,
+    class TileShapeMNK,
+    class TileCoordMNKL,
     class Accumulator,
     class TiledMma,
     class ResidueMNK

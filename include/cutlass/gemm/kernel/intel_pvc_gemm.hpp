@@ -254,6 +254,23 @@ public:
 
     // Perform the collective scoped MMA
     CollectiveMainloop collective_mma;
+    CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
+
+    Tensor trC = make_tensor<ElementC>(Shape<Int<VecC>>{});
+
+    bool is_C_load_needed = epilogue.is_producer_load_needed();
+
+    if (is_C_load_needed) {
+      epilogue.load(  
+        problem_shape_MNKL,
+        subgroup_shape,
+        tile_coord,
+        tiled_mma,
+        thread_idx,
+        trC
+      );
+    }
+
     collective_mma(
       accumulators,
       tAi(_,_,_,l_coord),
@@ -266,17 +283,28 @@ public:
       params.mainloop
     );
 
-    CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
-    epilogue(
+    epilogue.store(
       problem_shape_MNKL,
       subgroup_shape,
       tile_coord,
       accumulators,
       tiled_mma,
       residue_mnk,
+      trC,
       thread_idx,
       smem_buf
-      );
+    );
+
+    // epilogue(
+    //   problem_shape_MNKL,
+    //   subgroup_shape,
+    //   tile_coord,
+    //   accumulators,
+    //   tiled_mma,
+    //   residue_mnk,
+    //   thread_idx,
+    //   smem_buf
+    //   );
   }
 };
 
