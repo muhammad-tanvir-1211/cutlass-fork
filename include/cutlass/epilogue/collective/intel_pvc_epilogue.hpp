@@ -121,10 +121,10 @@ public:
   static_assert(cute::rank(StrideC{}) == 3, "StrideC must be rank-3: [M, N, L]");
   static_assert(cute::rank(StrideD{}) == 3, "StrideD must be rank-3: [M, N, L]");
 
-  static_assert(std::is_same_v<CopyOpS2R, void>, "Intel PVC does not support shared memory");
-  static_assert(std::is_same_v<CopyOpR2S, void>, "Intel PVC does not support shared memory");
-  static_assert(std::is_same_v<SmemLayoutAtomC, void>, "Intel PVC does not support shared memory");
-  static_assert(std::is_same_v<SmemLayoutAtomD, void>, "Intel PVC does not support shared memory");
+  static_assert(std::is_same_v<CopyOpS2R, void>, "Copy operation to shared memory is not supported");
+  static_assert(std::is_same_v<CopyOpR2S, void>, "Copy operation to shared memory is not supported");
+  static_assert(std::is_same_v<SmemLayoutAtomC, void>, "Copy operation to shared memory is not supported");
+  static_assert(std::is_same_v<SmemLayoutAtomD, void>, "Copy operation to shared memory is not supported");
 
 private:
   constexpr static bool is_source_supported = not cute::is_void_v<ElementC>;
