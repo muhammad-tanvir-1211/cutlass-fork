@@ -298,7 +298,7 @@ public:
     bool is_C_load_needed = is_source_supported && fusion_callbacks.is_C_load_needed();
 
     if(is_C_load_needed) {
-      copy(params.xe_load_c, load_coord(_,_,_,l_coord)(_,0,0), trC);
+      copy(params.xe_load_c, load_coord(_,_,_,l_coord)(_,_,0), trC);
     }
   }
 
@@ -326,7 +326,7 @@ public:
       ReadCoord read_coord,
       WriteCoord write_coord,
       OutCoord cD,
-      ComputeReg& regC,
+      ComputeReg regC,
       DoubelBufReg& regC_db,
       OutReg regD,
       const int thread_idx,
@@ -408,9 +408,8 @@ public:
 
     bool is_C_load_needed = is_source_supported && fusion_callbacks.is_C_load_needed();
 
-    Tensor trC_db = make_tensor<typename TiledMma::ValTypeC>(Shape<Int<FragmentSize>>{});
+    Tensor trC_db = make_tensor<typename TiledMma::ValTypeC>(Shape<Int<FragmentSize>, Int<FragsM>>{});
     Tensor trD = make_tensor<typename TiledMma::ValTypeD>(Shape<Int<FragmentSize>>{});
-    Tensor trD_db = make_tensor<typename TiledMma::ValTypeD>(Shape<Int<FragmentSize>>{});
     Tensor tOuti = params.xe_store_d.get_pvc_tensor(make_coord(m_coord, n_coord, 0),
                                                   make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
                                                   make_stride(Int<DpasM>{}, Int<DpasN>{}));
@@ -421,55 +420,47 @@ public:
 
     auto residue_mn = make_coord(M, N);
 
-    constexpr int loop_limit = (FragsM * FragsN) / 2;
-    int epi_m_curr = 0, epi_m_next = 0;
-    int epi_n_curr = 0, epi_n_next = 0;
-    int epi_idx_curr = 0, epi_idx_next = 1;
-
+    // main loop for epilogue
     CUTLASS_PRAGMA_UNROLL
-    for (int idx = 0; idx < loop_limit - 1; idx++) {
-
-      epi_m_curr = epi_idx_curr % FragsM;
-      epi_n_curr = epi_idx_curr++ / FragsM;
-
-      epi_m_next = epi_idx_next % FragsM;
-      epi_n_next = epi_idx_next++ / FragsM;
-
-      compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
-                            accumulators, residue_mnk, rw_coord(_, epi_m_next, epi_n_next), 
-                            rw_coord(_, epi_m_curr, epi_n_curr), cD, trC, trC_db, trD, thread_idx, 
-                            epi_m_curr, epi_n_curr, is_C_load_needed);
-
-      epi_m_curr = epi_idx_curr % FragsM;
-      epi_n_curr = epi_idx_curr++ / FragsM;
-
-      epi_m_next = epi_idx_next % FragsM;
-      epi_n_next = epi_idx_next++ / FragsM;
-
-      compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
-                            accumulators, residue_mnk, rw_coord(_, epi_m_next, epi_n_next), 
-                            rw_coord(_, epi_m_curr, epi_n_curr), cD, trC_db, trC, trD_db, thread_idx, 
-                            epi_m_curr, epi_n_curr, is_C_load_needed);
+    for(int i = 0; i < FragsN - 1; i+=2) {
+      CUTLASS_PRAGMA_UNROLL
+      for(int j = 0; j < FragsM; j++) {
+        compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
+                              accumulators, residue_mn, rw_coord(_, j, i + 1), 
+                              rw_coord(_, j, i), cD, trC(_, j),  
+                              trC_db(_, j), trD, thread_idx, j, i, 
+                              is_C_load_needed);
+      }
+      i++;
+      CUTLASS_PRAGMA_UNROLL
+      for(int j = 0; j < FragsM; j++) {
+        compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
+                              accumulators, residue_mn, rw_coord(_, j, i + 1), 
+                              rw_coord(_, j, i), cD, trC_db(_, j),  
+                              trC(_, j), trD, thread_idx, j, i, 
+                              is_C_load_needed);
+      }
     }
 
-    epi_m_curr = epi_idx_curr % FragsM;
-    epi_n_curr = epi_idx_curr++ / FragsM;
+    // process remaining fragments
+    CUTLASS_PRAGMA_UNROLL
+    for(int j = 0; j < FragsM; j++) {
+      compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
+                            accumulators, residue_mn, rw_coord(_, j, FragsN - 1), 
+                            rw_coord(_, j, FragsN - 2), cD, trC(_, j),  
+                            trC_db(_, j), trD, thread_idx, j, FragsN - 2, 
+                            is_C_load_needed);
+    }
 
-    epi_m_next = epi_idx_next % FragsM;
-    epi_n_next = epi_idx_next++ / FragsM;
+    CUTLASS_PRAGMA_UNROLL
+    for(int j = 0; j < FragsM; j++) {
+      compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
+                            accumulators, residue_mn, rw_coord(_, j, FragsN - 1), 
+                            rw_coord(_, j, FragsN - 1), cD, trC_db(_, j),  
+                            trC(_, j), trD, thread_idx, j, FragsN - 1, 
+                            false);
+    }
 
-    compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
-                          accumulators, residue_mnk, rw_coord(_, epi_m_next, epi_n_next), 
-                          rw_coord(_, epi_m_curr, epi_n_curr), cD, trC, trC_db, trD, thread_idx, 
-                          epi_m_curr, epi_n_curr, is_C_load_needed);
-
-    epi_m_curr = epi_idx_curr % FragsM;
-    epi_n_curr = epi_idx_curr++ / FragsM;
-
-    compute<FragmentSize>(problem_shape_mnkl, tile_shape_MNK, tile_coord_mnkl,
-                          accumulators, residue_mnk, rw_coord(_, epi_m_next, epi_n_next), 
-                          rw_coord(_, epi_m_curr, epi_n_curr), cD, trC_db, trC, trD_db, thread_idx, 
-                          epi_m_curr, epi_n_curr, false);
   }
 
   template<

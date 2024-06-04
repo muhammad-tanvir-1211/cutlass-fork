@@ -256,7 +256,7 @@ public:
     CollectiveMainloop collective_mma;
     CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
 
-    Tensor trC = make_tensor<ElementC>(Shape<Int<VecC>>{});
+    Tensor trC = make_tensor<ElementC>(Shape<Int<VecC>, Int<FragsM>>{});
 
     bool is_C_load_needed = epilogue.is_producer_load_needed();
 
