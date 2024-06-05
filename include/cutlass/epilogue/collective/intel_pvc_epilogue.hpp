@@ -140,18 +140,6 @@ public:
   using SmemDStorage = EmptyType;
 
   struct TensorStorageImpl: cute::tuple<SmemCStorage, SmemDStorage> {
-    using Base = cute::tuple<SmemCStorage, SmemDStorage>;
-
-    constexpr decltype(auto)
-    smem_C() {
-      return cute::get<0>(static_cast<Base &>(*this));
-    }
-
-    constexpr decltype(auto)
-    smem_D() {
-      return cute::get<1>(static_cast<Base &>(*this));
-    }
-
     using FusionStorage = typename FusionCallbacks::SharedStorage;
     FusionStorage thread;
   };
@@ -298,7 +286,7 @@ public:
     Tensor mD_crd = make_identity_tensor(make_shape(M,N));
     Tensor cD = local_tile(mD_crd, take<0,2>(TileShapeMNK{}), make_coord(m_coord, n_coord));
     // Get the fusion callbacks
-    constexpr bool RefSrc = true; // Register tensors reference R2S copy src layout
+    constexpr bool RefSrc = true;
     auto residue_mn = make_coord(M, N);
     auto cst_args = cutlass::epilogue::fusion::detail::ConsumerStoreArgs{
                       problem_shape_mnkl,
