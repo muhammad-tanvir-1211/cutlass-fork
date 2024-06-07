@@ -56,6 +56,101 @@ namespace cutlass::epilogue::fusion {
 template <
   class ElementOutput_,
   class ElementCompute_,
+  class ElementScalar_,
+  FloatRoundStyle RoundStyle_,
+  class CtaTileShapeMNK_,
+  class EpilogueTile_
+>
+struct FusionCallbacks<
+    epilogue::IntelPVCEpilogue,
+    fusion::ScaledAcc<ElementOutput_, ElementCompute_, ElementScalar_, RoundStyle_>,
+    CtaTileShapeMNK_,
+    EpilogueTile_
+> : Sm90EVT<Sm90Compute<multiplies, ElementOutput_, ElementCompute_, RoundStyle_>,
+      Sm90ScalarBroadcast<ElementScalar_>,
+      Sm90AccFetch
+    > {
+
+  using ElementOutput = ElementOutput_;
+  using ElementCompute = ElementCompute_;
+  using ElementScalar = ElementScalar_;
+
+  using Impl = 
+    Sm90EVT<Sm90Compute<multiplies, ElementOutput, ElementCompute, RoundStyle_>,
+      Sm90ScalarBroadcast<ElementScalar>,
+      Sm90AccFetch
+    >;
+  using Operation = fusion::ScaledAcc<ElementOutput, ElementCompute, ElementScalar, RoundStyle_>;
+
+  struct Arguments {
+    ElementScalar alpha = ElementScalar(1);
+    ElementScalar const* alpha_ptr = nullptr;
+
+    operator typename Impl::Arguments() const {
+      return
+        { // binary op : alpha * acc
+          {{alpha}, {alpha_ptr}}, // leaf args : alpha
+          {},                     // leaf args : acc
+          {}                  // binary args : multiplies
+        };   // end binary op
+    }
+  };
+
+  // Ctor inheritance
+  using Impl::Impl;
+};
+
+template <
+  class ElementOutput_,
+  class ElementCompute_,
+  class ElementSource_,
+  class ElementScalar_,
+  FloatRoundStyle RoundStyle_,
+  class CtaTileShapeMNK_,
+  class EpilogueTile_
+>
+struct FusionCallbacks<
+    epilogue::IntelPVCEpilogue,
+    fusion::ScaledC<ElementOutput_, ElementCompute_, ElementSource_, ElementScalar_, RoundStyle_>,
+    CtaTileShapeMNK_,
+    EpilogueTile_
+> : Sm90EVT<Sm90Compute<multiplies, ElementOutput_, ElementCompute_, RoundStyle_>,
+      Sm90ScalarBroadcast<ElementScalar_>,
+      Sm90SrcFetch<ElementSource_>
+    > {
+
+  using Impl = 
+    Sm90EVT<Sm90Compute<multiplies, ElementOutput_, ElementCompute_, RoundStyle_>,
+      Sm90ScalarBroadcast<ElementScalar_>,
+      Sm90SrcFetch<ElementSource_>
+    >;
+  using ElementOutput = ElementOutput_;
+  using ElementCompute = ElementCompute_;
+  using ElementSource = ElementSource_;
+  using ElementScalar = ElementScalar_;
+  using Operation = fusion::ScaledC<ElementOutput, ElementCompute, ElementSource_, ElementScalar, RoundStyle_>;
+
+  struct Arguments {
+    ElementScalar beta = ElementScalar(0);
+    ElementScalar const* beta_ptr = nullptr;
+
+    operator typename Impl::Arguments() const {
+      return
+        { // binary op : beta * C
+          {{beta}, {beta_ptr}}, // leaf args : beta
+          {},                   // leaf args : C
+          {}                  // binary args : multiplies
+        };   // end binary op
+    }
+  };
+
+  // Ctor inheritance
+  using Impl::Impl;
+};
+
+template <
+  class ElementOutput_,
+  class ElementCompute_,
   class ElementSource_,
   class ElementScalar_,
   FloatRoundStyle RoundStyle_,
@@ -67,9 +162,11 @@ struct FusionCallbacks<
     fusion::LinearCombination<ElementOutput_, ElementCompute_, ElementSource_, ElementScalar_, RoundStyle_>,
     CtaTileShapeMNK_,
     EpilogueTile_
-> : Sm90LinearCombination<typename cutlass::detail::get_unpacked_element_type<ElementOutput_>::type, ElementCompute_, ElementSource_, ElementScalar_, RoundStyle_> {
+> : Sm90LinearCombination<typename cutlass::detail::get_unpacked_element_type<ElementOutput_>::type, 
+                          ElementCompute_, ElementSource_, ElementScalar_, RoundStyle_> {
 
-  using Impl = Sm90LinearCombination<typename cutlass::detail::get_unpacked_element_type<ElementOutput_>::type, ElementCompute_, ElementSource_, ElementScalar_, RoundStyle_>;
+  using Impl = Sm90LinearCombination<typename cutlass::detail::get_unpacked_element_type<ElementOutput_>::type, 
+                                    ElementCompute_, ElementSource_, ElementScalar_, RoundStyle_>;
   using ElementOutput = ElementOutput_;
   using ElementCompute = ElementCompute_;
   using ElementSource = ElementSource_;
@@ -99,6 +196,66 @@ struct FusionCallbacks<
 
   // Ctor inheritance
   using Impl::Impl;
+
+  using SharedStorage = typename Impl::SharedStorage;
+
+  using Prologue = FusionCallbacks<epilogue::IntelPVCEpilogue, 
+                                  fusion::ScaledC<ElementOutput, ElementCompute, ElementSource, ElementScalar, RoundStyle_>,
+                                  CtaTileShapeMNK_,
+                                  EpilogueTile_>;
+  using PrologueParams = typename Prologue::Params;
+  using PrologueSharedStorage = typename Prologue::SharedStorage;
+  using PrologueArgs = typename Prologue::Arguments;
+
+  using Epilogue = FusionCallbacks<epilogue::IntelPVCEpilogue, 
+                                  fusion::ScaledAcc<ElementOutput, ElementCompute, ElementScalar, RoundStyle_>,
+                                  CtaTileShapeMNK_,
+                                  EpilogueTile_>;
+  using EpilogueParams = typename Epilogue::Params;
+  using EpilogueSharedStorage = typename Epilogue::SharedStorage;
+  using EpilogueArgs = typename Epilogue::Arguments;
+
+  static constexpr PrologueArgs
+  get_prologue_args(Arguments const& args) {
+    return PrologueArgs{args.beta / args.alpha, args.beta_ptr};
+  }
+
+  static constexpr EpilogueArgs
+  get_epilogue_args(Arguments const& args) {
+    return EpilogueArgs{args.alpha, args.alpha_ptr};
+  }
+
+  template <typename StorageType>
+  static constexpr StorageType
+  get_storage() {
+    StorageType storage;
+    return storage;
+  }
+
+  struct Params {
+    PrologueParams prologue_params;
+    EpilogueParams epilogue_params;
+    typename Impl::Params params;
+  };
+
+  template <class ProblemShape>
+  static constexpr Params
+  to_underlying_arguments(ProblemShape const& problem_shape, Arguments const& args, void* workspace) {
+    return {
+      Prologue::to_underlying_arguments(problem_shape, get_prologue_args(args), workspace),
+      Epilogue::to_underlying_arguments(problem_shape, get_epilogue_args(args), workspace),
+      Impl::to_underlying_arguments(problem_shape, args, workspace)
+    };
+  };
+
+  FusionCallbacks(Params const& params, SharedStorage const& shared_storage) 
+                  : Impl(params.params, shared_storage),
+                    prologue(params.prologue_params, get_storage<PrologueSharedStorage>()),
+                    epilogue(params.epilogue_params, get_storage<EpilogueSharedStorage>())
+                    {}
+
+  Prologue prologue;
+  Epilogue epilogue;
 };
 
 } // namespace cutlass::epilogue::fusion

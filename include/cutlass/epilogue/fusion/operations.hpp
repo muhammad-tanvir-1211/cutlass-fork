@@ -93,6 +93,20 @@ struct ScaledAcc : FusionOperation {
   static constexpr auto RoundStyle = RoundStyle_;
 };
 
+// D = beta * C
+template<
+  class ElementOutput_,
+  class ElementCompute_,
+  class ElementSource_ = ElementOutput_,
+  class ElementScalar_ = ElementCompute_,
+  FloatRoundStyle RoundStyle_ = FloatRoundStyle::round_to_nearest
+>
+struct ScaledC
+    : ScaledAcc<ElementOutput_, ElementCompute_, ElementScalar_, RoundStyle_> {
+  using ElementSource = ElementSource_;
+  static constexpr bool IsSourceSupported = true;
+};
+
 // D = alpha * acc + beta * C
 template<
   class ElementOutput_,

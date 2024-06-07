@@ -256,8 +256,6 @@ public:
     CollectiveMainloop collective_mma;
     CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
 
-    Tensor trC = make_tensor<ElementC>(Shape<Int<VecC>, Int<FragsM>>{});
-
     bool is_C_load_needed = epilogue.is_producer_load_needed();
 
     if (is_C_load_needed) {
@@ -267,7 +265,7 @@ public:
         tile_coord,
         tiled_mma,
         thread_idx,
-        trC
+        accumulators
       );
     }
 
@@ -290,21 +288,10 @@ public:
       accumulators,
       tiled_mma,
       residue_mnk,
-      trC,
+      accumulators,
       thread_idx,
       smem_buf
     );
-
-    // epilogue(
-    //   problem_shape_MNKL,
-    //   subgroup_shape,
-    //   tile_coord,
-    //   accumulators,
-    //   tiled_mma,
-    //   residue_mnk,
-    //   thread_idx,
-    //   smem_buf
-    //   );
   }
 };
 
