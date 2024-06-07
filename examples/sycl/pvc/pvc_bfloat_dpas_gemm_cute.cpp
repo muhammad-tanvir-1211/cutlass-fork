@@ -208,8 +208,8 @@ struct ExampleRunner {
 
     // Check if output from CUTLASS kernel and reference kernel are relatively equal or not
     // need to set a larger error margin for comparison to succeed
-    auto epsilon = static_cast<ElementOutput>(0.5f);
-    auto nonzero_floor = static_cast<ElementOutput>(0.5f);
+    auto epsilon = static_cast<ElementOutput>(0.1f);
+    auto nonzero_floor = static_cast<ElementOutput>(0.1f);
 
     bool passed = cutlass::reference::device::BlockCompareRelativelyEqual(
             block_ref_D.get(), block_D.get(), block_D.size(),
@@ -235,7 +235,7 @@ struct ExampleRunner {
     block_D.reset(M * N * L);
     block_ref_D.reset(M * N * L);
 
-    // TODO: Enable initialization on device directly once RNG is 
+    // TODO: Enable initialization on device directly once RNG is
     // available through SYCL.
     std::vector<ElementA> a(K * M * L);
     std::vector<ElementB> b(K * N * L);
