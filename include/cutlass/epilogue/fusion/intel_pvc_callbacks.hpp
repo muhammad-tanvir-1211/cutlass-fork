@@ -146,6 +146,12 @@ struct FusionCallbacks<
 
   // Ctor inheritance
   using Impl::Impl;
+
+  CUTLASS_DEVICE bool
+  is_C_load_needed() const {
+    auto const& scale_op = get<0>(Impl::ops);
+    return not scale_op.is_zero();
+  }
 };
 
 template <
