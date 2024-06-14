@@ -288,7 +288,6 @@ public:
       accumulators,
       tiled_mma,
       residue_mnk,
-      accumulators,
       thread_idx,
       smem_buf
     );

@@ -269,11 +269,11 @@ public:
 
     auto residue_mn = make_coord(M,N);
 
-    Tensor load_coord = params.xe_store_d.get_pvc_tensor(make_coord(m_coord, n_coord, 0),
+    Tensor load_coord = params.xe_load_c.get_pvc_tensor(make_coord(m_coord, n_coord, 0),
                                                   make_shape(Int<FragsM>{}, Int<FragsN>{}, L),
                                                   make_stride(Int<DpasM>{}, Int<DpasN>{}));
 
-    // Get the fusion callbacks for the producer load warp
+    // Get the fusion callbacks for loading C
     auto pld_args = cutlass::epilogue::fusion::detail::ProducerLoadArgs{
                       problem_shape_mnkl,
                       CtaTileMNK{},
@@ -292,6 +292,10 @@ public:
     Tensor mD_crd = make_identity_tensor(make_shape(M,N));
     Tensor cD = local_tile(mD_crd, take<0,2>(TileShapeMNK{}), make_coord(m_coord, n_coord));
 
+    // intermediate registers required to make sure we pass only
+    // FragmentSize tensor to the ConsumerStoreCallbacks. This ensures
+    // the usage of visit funtion for the SM90SrcFetch op without any
+    // changes. 
     Tensor trD = make_tensor<typename TiledMma::ValTypeD>(Shape<Int<FragmentSize>>{});
 
     // main loop for prologue
@@ -311,7 +315,7 @@ public:
                           thread_idx,
                           cD,
                           cD,
-                          trD
+                          trD //pass the intermediate tensor here
                         };
 
         constexpr bool RefSrc = true;
@@ -323,7 +327,10 @@ public:
 
         CUTLASS_PRAGMA_UNROLL
         for (int epi_v = 0; epi_v < FragmentSize; ++epi_v) {
+          //copy the value needed to be loaded in SM90SrcFetch visit function
+          // to the intermediate tensor
           trD_frag(epi_v) = trC_frag(epi_v);
+          //call the visit function to perform beta * C
           trC_frag(epi_v) = cst_callbacks.visit(trC_frag(epi_v), epi_v, epi_m, epi_n);
         }
 
@@ -333,42 +340,12 @@ public:
   }
 
   template<
-    int FragmentSize,
-    class StoreCallBacks,
-    class Accumulator,
-    class OutReg
-  >
-  CUTLASS_DEVICE void 
-  compute(
-      StoreCallBacks cst_callbacks,
-      Accumulator accumulators,
-      OutReg& regD_frag,
-      const int epi_m,
-      const int epi_n,
-      const bool is_C_load_needed) {
-
-    cst_callbacks.begin();
-
-    cst_callbacks.previsit(epi_m, epi_n, 0, is_C_load_needed);
-
-    auto acc_frag_mn = recast<Array<ElementOutput, FragmentSize>>(accumulators)(_, epi_m, epi_n);
-
-    CUTLASS_PRAGMA_UNROLL
-    for (int epi_v = 0; epi_v < FragmentSize; ++epi_v) {
-      regD_frag(epi_v) = cst_callbacks.visit(acc_frag_mn(epi_v), epi_v, epi_m, epi_n);
-    }
-
-    cst_callbacks.end();
-  }
-
-  template<
     class ProblemShapeMNKL,
     class TileShapeMNK,
     class TileCoordMNKL,
     class Accumulator,
     class TiledMma,
-    class ResidueMNK,
-    class RegC
+    class ResidueMNK
   >
   CUTLASS_DEVICE void
   store(
@@ -378,7 +355,6 @@ public:
       Accumulator accumulators, 
       [[maybe_unused]] TiledMma tiled_mma,
       ResidueMNK residue_mnk,
-      RegC trC,
       int thread_idx,
       char*) {
 
@@ -424,15 +400,27 @@ public:
                           thread_idx,
                           cD,
                           cD,
-                          trD
+                          trD //this argument remains unused in the current setting
                         };
 
-        constexpr bool RefSrc = true; // Register tensors reference R2S copy src layout
+        constexpr bool RefSrc = true;
         auto cst_callbacks = fusion_callbacks.epilogue.template get_consumer_store_callbacks<RefSrc>(cst_args);
         auto regD_frag = recast<Array<ElementOutput, FragmentSize>>(trD);
-        compute<FragmentSize>(cst_callbacks, accumulators, regD_frag, epi_m, epi_n, is_C_load_needed);
-      
+
+        cst_callbacks.begin();
+
+        cst_callbacks.previsit(epi_m, epi_n, 0, is_C_load_needed);
+
+        auto acc_frag_mn = recast<Array<ElementOutput, FragmentSize>>(accumulators)(_, epi_m, epi_n);
+
+        CUTLASS_PRAGMA_UNROLL
+        for (int epi_v = 0; epi_v < FragmentSize; ++epi_v) {
+          regD_frag(epi_v) = cst_callbacks.visit(acc_frag_mn(epi_v), epi_v, epi_m, epi_n);
+        }
+
         copy(params.xe_store_d, trD, rw_coord(_, epi_m, epi_n));
+
+        cst_callbacks.end();
       }
     }
   }
