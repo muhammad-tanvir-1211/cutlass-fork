@@ -51,7 +51,7 @@ template <typename T>
 static void fill_matrix(std::vector<T> &vector)
 {
   std::generate(std::begin(vector), std::end(vector), [&] {
-      return static_cast<T>( 2 * (rand() / double(RAND_MAX)) -1 );
+    return static_cast<T>( (rand() / double(RAND_MAX)) );
   });
 }
 
@@ -357,6 +357,7 @@ int main(int argc, const char** argv)
 
   // Workgroup-level tile
   using TileShape = Shape<_32, _256, _32>;
+  using EpilogueShape = Shape<_32, _64>;
 
   using TiledMma = TiledMMA<MMA_Atom<XE_8x16x16_F32BF16BF16F32_TN>,
           Layout<Shape<_1,_1,_1>>,
