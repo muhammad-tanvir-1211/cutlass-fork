@@ -386,7 +386,8 @@ int main(int argc, const char** argv)
   using GemmKernel = cutlass::gemm::kernel::GemmUniversal<
   Shape<int, int, int, int>,
   CollectiveMainloop,
-  CollectiveEpilogue
+  CollectiveEpilogue,
+  cutlass::gemm::StreamKScheduler
   >;
 
   using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
