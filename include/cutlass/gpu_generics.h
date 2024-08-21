@@ -323,10 +323,11 @@ CUTLASS_DEVICE int atomicAdd(int *address, int val) {
 }
 
 CUTLASS_DEVICE int atomicCAS(int *address, int compare, int val) {
+  int result = 0;
 #if defined(__SYCL_DEVICE_ONLY__)
-  syclcompat::atomic_compare_exchange_strong(address, compare, val);
+  result = syclcompat::atomic_compare_exchange_strong(address, compare, val);
 #endif
-  return 0;
+  return result;
 }
 
 // Error

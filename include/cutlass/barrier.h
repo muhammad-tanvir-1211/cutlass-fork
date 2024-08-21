@@ -97,7 +97,13 @@ protected:
   {
     int state = 0;
 
-#if (__CUDA_ARCH__ >= 700)
+#ifdef SYCL_INTEL_TARGET
+    using atomicT = sycl::atomic_ref<int, sycl::memory_order::relaxed, 
+                                     sycl::memory_scope::device, 
+                                     sycl::access::address_space::global_space>;
+    auto atm = atomicT(*ptr);
+    return atm.load();
+#elif defined (__CUDA_ARCH__ >= 700)
     /// SM70 and newer use memory consistency qualifiers
 
     // Acquire pattern using acquire modifier
@@ -140,8 +146,8 @@ public:
     if (thread_idx == 0)
     {
         // Spin-loop
-        #pragma unroll 1
-        while(ld_acquire(flag_ptr) < count) {}
+        // #pragma unroll 1
+        // while(ld_acquire(flag_ptr) < count) {}
     }
 
     Sync::sync();
@@ -156,8 +162,8 @@ public:
     if (thread_idx == 0)
     {
         // Spin-loop
-        #pragma unroll 1
-        while(ld_acquire(flag_ptr) != val) {}
+        // #pragma unroll 1
+        // while(ld_acquire(flag_ptr) != val) {}
     }
     Sync::sync();
   }
@@ -170,8 +176,8 @@ public:
     if (thread_idx == 0)
     {
         // Spin-loop
-        #pragma unroll 1
-        while(atomicCAS(flag_ptr, val, 0) != val) {}
+        // #pragma unroll 1
+        // while(atomicCAS(flag_ptr, val, 0) != val) {}
     }
 
     Sync::sync();

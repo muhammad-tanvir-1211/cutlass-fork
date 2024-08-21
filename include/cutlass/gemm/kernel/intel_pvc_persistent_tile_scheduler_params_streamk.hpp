@@ -84,7 +84,10 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     StreamK
   };
 
+  FastDivmodU64Pow2 divmod_cluster_shape_major_{};
+  FastDivmodU64Pow2 divmod_cluster_shape_minor_{};
   FastDivmodU64 divmod_batch_{};
+  FastDivmodU64 divmod_cluster_blk_major_{};
 
   // We divide up the number of stream-K tiles amongst G groups of stream-K units.
   // The stream-K units within a group collaborate to comptue over the `sk_tiles / G`
@@ -137,7 +140,7 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
   static constexpr uint32_t min_iters_per_sk_unit_ = 8u;
 
   // Maximum number of groups of stream-K units
-  static constexpr uint32_t max_sk_groups_ = 8u;
+  // static constexpr uint32_t max_sk_groups_ = 8u;
 
   // ktile start from even for each cta
   uint32_t ktile_start_alignment_count { 1u };
@@ -295,7 +298,7 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
 
     // Determine the number of stream-K groups that will be used. Choosing the
     // fast moving dimension of the underlying grid.
-    uint32_t max_groups_problem = problem_blocks_n;
+    /*uint32_t max_groups_problem = problem_blocks_n;
 
     // Select the number of groups that will be use. We start with the maximum
     // number of potential groups, and iterate down looking for a group size that
@@ -346,7 +349,9 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     // found a fallback group count, use this instead.
     if (groups == 1 && fallback_groups > 0) {
       groups = fallback_groups;
-    }
+    }*/
+
+    uint32_t groups = 1;
 
     auto sk_units_per_group = sk_units / groups;
 
@@ -398,7 +403,11 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     divmod_sk_groups_ = FastDivmodU64(static_cast<uint64_t>(groups));
     divmod_sk_units_per_group_ = FastDivmodU64(static_cast<uint64_t>(sk_units / groups));
 
-    divmod_splits_ = FastDivmod(1);
+    divmod_cluster_shape_major_ = FastDivmodU64Pow2(1);
+    divmod_cluster_shape_minor_ = FastDivmodU64Pow2(1);
+    divmod_cluster_blk_major_ = FastDivmodU64(problem_blocks_n);
+
+    divmod_splits_ = FastDivmod(splits);
     units_per_problem_ = static_cast<uint32_t>(dp_units + sk_units);
 
     // Assign big_units_ assuming that group count == 1. This is unused by stream-K
@@ -412,6 +421,33 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     divmod_k_tiles_per_sk_unit_ = FastDivmod(static_cast<uint32_t>(k_tiles_per_sk_unit));
     divmod_k_tiles_per_sk_big_unit_ = FastDivmod(static_cast<uint32_t>(k_tiles_per_sk_unit + 1));
     reduction_mode_ = reduction_mode;
+  }
+
+  static CUTLASS_DEVICE
+  cute::tuple<int32_t, int32_t>
+  get_work_idx_m_and_n(
+      uint64_t blk_per_grid_dim,
+      FastDivmodU64Pow2 const& divmod_cluster_shape_major,
+      FastDivmodU64Pow2 const& divmod_cluster_shape_minor,
+      FastDivmodU64 const& divmod_cluster_blk_major) {
+
+    uint64_t m_idx, n_idx;
+    divmod_cluster_blk_major(m_idx, n_idx, blk_per_grid_dim);
+    auto i = static_cast<int32_t>(m_idx);
+    auto j = static_cast<int32_t>(n_idx);
+
+    return {i, j};
+  }
+
+  // Computes the linear index within a batch given M and N tile offsets within the batch.
+  // This essentially inverts the mapping performed in get_work_idx_m_and_n
+  static CUTLASS_DEVICE
+  uint64_t
+  get_linear_idx_from_m_and_n(
+    int32_t tile_m,
+    int32_t tile_n,
+    FastDivmodU64 const& divmod_cluster_blk_major) {
+    return static_cast<uint64_t>(tile_m * divmod_cluster_blk_major.divisor + tile_n);
   }
 
   // Get the number of CTA tiles in this problem. This variant of the method should only be used when
@@ -435,7 +471,9 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     dim3 problem_blocks,
     KernelHardwareInfo hw_info
   ) {
-    return dim3{problem_blocks.y, problem_blocks.x, 1};
+    uint32_t available_sms = hw_info.sm_count / 8;
+    uint32_t dimx = ((problem_blocks.x * problem_blocks.y) + available_sms - 1) / available_sms;
+    return dim3{available_sms, dimx, problem_blocks.z};
   }
 
   // Returns the number of stream-K tiles that will be computed amongst `output_tiles` total
@@ -736,19 +774,15 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
 
     divmod_batch_ = FastDivmodU64(blocks_m * blocks_n);
     divmod_tiles_per_output_tile_ = FastDivmod(k_tiles_per_output_tile);
-    divmod_sk_groups_ = FastDivmodU64(1u);
     divmod_splits_ = FastDivmod(splits);
     units_per_problem_ = blocks_m * blocks_n * blocks_l;
-    big_units_ = k_tiles_per_output_tile % splits;
     reduction_workspace_ = reduction_workspace;
     reduction_mode_ = reduction_mode;
     divmod_k_tiles_per_sk_unit_ = FastDivmod(k_tiles_per_output_tile / splits);
-    divmod_k_tiles_per_sk_big_unit_ = FastDivmod(k_tiles_per_output_tile / splits + 1);
 
     // No stream-K work is performed for "basic" data-parallel and split-K decompositions
     sk_tiles_ = 0;
     sk_units_ = 0;
-    divmod_sk_units_per_group_ = FastDivmodU64(1u);
   }
 
   private:

@@ -45,6 +45,7 @@ using namespace cute;
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
 template <
+  int Stages,
   class TileShape_,
   class ElementA_,
   class StrideA_,
@@ -60,7 +61,7 @@ template <
   class SmemCopyAtomB_,
   class TransformB_>
 struct CollectiveMma<
-    MainloopIntelPVCUnpredicated,
+    MainloopIntelPVC<Stages>,
     TileShape_,
     ElementA_,
     StrideA_,
@@ -79,7 +80,7 @@ struct CollectiveMma<
   //
   // Type Aliases
   //
-  using DispatchPolicy = MainloopIntelPVCUnpredicated;
+  using DispatchPolicy = MainloopIntelPVC<Stages>;
   using WorkgroupTileShape = TileShape_;
   using ElementA = ElementA_;
   using StrideA = StrideA_;
@@ -230,26 +231,23 @@ struct CollectiveMma<
     //
     // Mainloop
     //
-    int prefetch_k = 0;
+    const int k_start_idx = crd2idx((*k_tile_iter), make_shape(K));
+    int prefetch_k = k_start_idx;
 
-    // Manually set the prefetch_distance to 3
-    // TODO: Expose to users like stages parameter
-    int constexpr prefetch_distance = 3;
-    for (int i = 0; i < prefetch_distance; i++) {
+    for (int i = 0; i < DispatchPolicy::Stages; i++) {
       prefetch(mainloop.gmem_tiled_copy_a, tAi(_, _, prefetch_k));
       prefetch(mainloop.gmem_tiled_copy_b, tBi(_, _, prefetch_k));
       prefetch_k += get<2>(SubgroupTileShape{});
     }
 
-    for (int k_tile = 0, k = 0; k_tile < k_tile_count;
-         ++k_tile, k += get<2>(SubgroupTileShape{})) {
+    for (int k_tile = 0, k = k_start_idx; k_tile < k_tile_count;
+         ++k_tile, k += get<2>(SubgroupTileShape{}), prefetch_k += get<2>(SubgroupTileShape{})) {
       // Copy gmem to rmem for the first k_tile
       copy(mainloop.gmem_tiled_copy_a, gA(_, _, k), tAr);
       copy(mainloop.gmem_tiled_copy_b, gB(_, _, k), tBr);
 
       prefetch(mainloop.gmem_tiled_copy_a, tAi(_, _, prefetch_k));
       prefetch(mainloop.gmem_tiled_copy_b, tBi(_, _, prefetch_k));
-      prefetch_k += get<2>(SubgroupTileShape{});
 
       cute::gemm(tiled_mma, accum, tAr_view, tBr_view, src_accum);
     }
