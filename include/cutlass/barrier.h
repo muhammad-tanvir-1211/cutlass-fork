@@ -98,11 +98,10 @@ protected:
     int state = 0;
 
 #ifdef SYCL_INTEL_TARGET
-    using atomicT = sycl::atomic_ref<int, sycl::memory_order::relaxed, 
+    auto atm = sycl::atomic_ref<int, sycl::memory_order::relaxed, 
                                      sycl::memory_scope::device, 
-                                     sycl::access::address_space::global_space>;
-    auto atm = atomicT(*ptr);
-    return atm.load();
+                                     sycl::access::address_space::global_space>(*ptr);
+    return atm.load(sycl::memory_order::acquire);
 #elif defined (__CUDA_ARCH__ >= 700)
     /// SM70 and newer use memory consistency qualifiers
 
@@ -146,8 +145,8 @@ public:
     if (thread_idx == 0)
     {
         // Spin-loop
-        // #pragma unroll 1
-        // while(ld_acquire(flag_ptr) < count) {}
+        #pragma unroll 1
+        while(ld_acquire(flag_ptr) < count) {}
     }
 
     Sync::sync();
@@ -161,9 +160,10 @@ public:
 
     if (thread_idx == 0)
     {
+        //printf("BlockID: %lu | wait_eq: %d\n", BlockIdxY(), val);
         // Spin-loop
-        // #pragma unroll 1
-        // while(ld_acquire(flag_ptr) != val) {}
+        #pragma unroll 1
+        while(ld_acquire(flag_ptr) != val) {break;}
     }
     Sync::sync();
   }
@@ -175,9 +175,10 @@ public:
 
     if (thread_idx == 0)
     {
+        //printf("BlockID: %lu | wait_eq_reset: %d\n", BlockIdxY(), val);
         // Spin-loop
-        // #pragma unroll 1
-        // while(atomicCAS(flag_ptr, val, 0) != val) {}
+        #pragma unroll 1
+        while(atomicCAS(flag_ptr, val, 0) != val) {}
     }
 
     Sync::sync();
@@ -193,6 +194,7 @@ public:
 
     if (thread_idx == 0)
     {
+      //printf("BlockID: %lu | arrive_inc_val: %d\n", BlockIdxY(), val);
       red_release(flag_ptr, val);
     }
   }

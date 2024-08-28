@@ -185,7 +185,8 @@ public:
 
   CUTLASS_HOST_DEVICE
   PersistentTileSchedulerIntelPVCStreamK(Params const& params_) : scheduler_params(params_) {
-    current_work_linear_idx_ = uint64_t(BlockIdxX()) + uint64_t(BlockIdxY()) * uint64_t(GridDimX());
+    // current_work_linear_idx_ = uint64_t(BlockIdxX()) + uint64_t(BlockIdxY()) * uint64_t(GridDimX());
+    current_work_linear_idx_ = uint64_t(BlockIdxY());
   }
 
   CUTLASS_DEVICE
@@ -580,8 +581,8 @@ CUTLASS_DEVICE
       // auto big_units_in_group = params.div_cluster_size(
       //   k_tiles_in_group - (k_tiles_per_unit_in_group * params.divmod_sk_units_per_group_.divisor));
 
-      // uint64_t split;
-      // params.divmod_clusters_mnl_(split, cluster_linear_work_idx, cluster_linear_work_idx);
+      uint64_t split;
+      params.divmod_sk_units_per_group_(split, output_tile_id, output_tile_id);
 
       bool is_split_k = params.divmod_splits_.divisor > 1;
       auto big_unit_cmp_lhs = output_tile_id;
@@ -590,7 +591,7 @@ CUTLASS_DEVICE
       auto k_tiles_per_split = is_split_k ? params.divmod_k_tiles_per_sk_unit_.divisor : k_tiles_per_unit_in_group;
 
       // Determine the starting k iteration computed by this stream-K work unit
-      uint32_t unit_iter_start = (linear_idx_mult * linear_idx) + k_tiles_per_split;
+      uint32_t unit_iter_start = (linear_idx_mult * linear_idx) + (k_tiles_per_split * split);
 
       // Adjust the starting position and number of k iterations for "big units," which
       // compute one extra iteration. If there are any big units, they will be the first
@@ -733,8 +734,6 @@ CUTLASS_DEVICE
 
     auto [work_idx_m, work_idx_n] = Params::get_work_idx_m_and_n(
                                           cta_per_grid_dim,
-                                          params.divmod_cluster_shape_major_,
-                                          params.divmod_cluster_shape_minor_,
                                           params.divmod_cluster_blk_major_
                                         );
 
@@ -742,6 +741,11 @@ CUTLASS_DEVICE
     work_tile_info.M_idx = work_idx_m;
     work_tile_info.N_idx = work_idx_n;
     work_tile_info.L_idx = work_idx_l;
+
+    // if(linear_idx >= 32 && ThreadIdxX() == 0)
+    //   printf("BlockID: %lu | k_tile_count: %d | M_idx: %lu | N_idx: %lu | K_idx: %lu | L_idx: %lu | ctas_per_grid_dim: %lu | output_tile_id: %lu\n",
+    //         BlockIdxY(), work_tile_info.k_tile_count, work_tile_info.M_idx, work_tile_info.N_idx, work_tile_info.K_idx,
+    //         work_tile_info.L_idx, remainder, output_tile_id);
   }
 
   // Returns the starting and ending peer ID of this tile

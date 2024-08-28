@@ -140,7 +140,7 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
   static constexpr uint32_t min_iters_per_sk_unit_ = 8u;
 
   // Maximum number of groups of stream-K units
-  // static constexpr uint32_t max_sk_groups_ = 8u;
+  static constexpr uint32_t max_sk_groups_ = 1u;
 
   // ktile start from even for each cta
   uint32_t ktile_start_alignment_count { 1u };
@@ -351,7 +351,7 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
       groups = fallback_groups;
     }*/
 
-    uint32_t groups = 1;
+    uint32_t groups = max_sk_groups_;
 
     auto sk_units_per_group = sk_units / groups;
 
@@ -427,8 +427,6 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
   cute::tuple<int32_t, int32_t>
   get_work_idx_m_and_n(
       uint64_t blk_per_grid_dim,
-      FastDivmodU64Pow2 const& divmod_cluster_shape_major,
-      FastDivmodU64Pow2 const& divmod_cluster_shape_minor,
       FastDivmodU64 const& divmod_cluster_blk_major) {
 
     uint64_t m_idx, n_idx;
@@ -471,9 +469,12 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     dim3 problem_blocks,
     KernelHardwareInfo hw_info
   ) {
-    uint32_t available_sms = hw_info.sm_count / 8;
-    uint32_t dimx = ((problem_blocks.x * problem_blocks.y) + available_sms - 1) / available_sms;
-    return dim3{available_sms, dimx, problem_blocks.z};
+    uint32_t available_sms = 32;//hw_info.sm_count / 8;
+    // printf("available_sms: %d\n", available_sms);
+    auto possibly_truncate = [&](int x, int y) {
+      return static_cast<unsigned int>(platform::min(x, y));
+    };
+    return dim3{1, possibly_truncate(available_sms, problem_blocks.x * problem_blocks.y * problem_blocks.z), 1};
   }
 
   // Returns the number of stream-K tiles that will be computed amongst `output_tiles` total
