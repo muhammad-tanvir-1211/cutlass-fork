@@ -339,8 +339,8 @@ public:
       );
 
       // Perform reduction across splits, if needed
-      TileScheduler::template fixup<SubgroupSize>(
-        params.scheduler, work_tile_info, sub_group_id, accumulators);
+      TileScheduler::template fixup<MaxThreadsPerBlock>(
+        params.scheduler, work_tile_info, accumulators);
 
       if (TileScheduler::compute_epilogue(work_tile_info, params.scheduler)) {
         CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
