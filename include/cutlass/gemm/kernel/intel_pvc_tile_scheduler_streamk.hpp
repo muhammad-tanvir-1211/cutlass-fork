@@ -415,7 +415,7 @@ template <int ThreadsPerBlock, class FrgTensorC>
   output_tile_index(Params const& params, WorkTileInfo const& work_tile_info) {
     uint64_t linear_idx_in_batch = Params::get_linear_idx_from_m_and_n(
       work_tile_info.M_idx, work_tile_info.N_idx,
-      params.divmod_cluster_blk_major_
+      params.divmod_blk_major_
     );
 
     uint64_t tiles_mn = params.divmod_batch_.divisor;
@@ -730,7 +730,7 @@ CUTLASS_DEVICE
 
     auto [work_idx_m, work_idx_n] = Params::get_work_idx_m_and_n(
                                           cta_per_grid_dim,
-                                          params.divmod_cluster_blk_major_
+                                          params.divmod_blk_major_
                                         );
 
     // Set the M, N, and L block offsets

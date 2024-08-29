@@ -289,9 +289,25 @@ public:
     constexpr auto workgroup_shape = WorkgroupTileShape{};                                                  // (BLK_M,BLK_N,BLK_K)
     constexpr auto subgroup_shape = SubgroupTileShape{};                                                  // (SUB_M,SUB_N,SUB_K)
 
+    constexpr int version =
+        is_same_v<typename CollectiveMainloop::GmemTiledCopyB,
+                  XE_2D_U16x16x16x2x1_V>
+            ? 1
+            : 2;
+
+    auto k_residue   = K - get<2>(subgroup_shape) * (K / get<2>(subgroup_shape));        // K - SUB_K * k_coord_max
+
+    TiledMma tiled_mma;
+    CollectiveMainloop collective_mma;
+    CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
+
+    Tensor accumulators = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM>, Int<FragsN>>{});
+
+    const int m_offset = sub_group_id / CollectiveMainloop::sg_per_wg_n * get<0>(subgroup_shape);
+    const int n_offset = sub_group_id % CollectiveMainloop::sg_per_wg_n * get<1>(subgroup_shape);
     while (work_tile_info.is_valid()) {
-      const int m_coord = work_tile_info.M_idx * get<0>(workgroup_shape) + sub_group_id / CollectiveMainloop::sg_per_wg_n * get<0>(subgroup_shape);
-      const int n_coord = work_tile_info.N_idx * get<1>(workgroup_shape) + sub_group_id % CollectiveMainloop::sg_per_wg_n * get<1>(subgroup_shape);
+      const int m_coord = work_tile_info.M_idx * get<0>(workgroup_shape) + m_offset;
+      const int n_coord = work_tile_info.N_idx * get<1>(workgroup_shape) + n_offset;
       const int l_coord = work_tile_info.L_idx;
 
       // Get the number of K tiles to compute for this work as well as the starting K tile offset of the work.
@@ -304,11 +320,6 @@ public:
               make_coord(m_coord, 0, 0),
               make_shape(_1{}, K, L),
               make_stride(Int<FragsM>{} * get<0>(MmaAtomShape()),_1{}));
-      constexpr int version =
-          is_same_v<typename CollectiveMainloop::GmemTiledCopyB,
-                    XE_2D_U16x16x16x2x1_V>
-              ? 1
-              : 2;
 
       Tensor tBi = params.mainloop.gmem_tiled_copy_b.get_pvc_tensor(
               make_coord(n_coord, 0, 0),
@@ -318,13 +329,10 @@ public:
       // Compute tile residues for predication
       auto m_max_coord = M - get<0>(subgroup_shape) * m_coord;                             // M - SUB_M * m_coord
       auto n_max_coord = N - get<1>(subgroup_shape) * n_coord;                             // N - SUB_N * n_coord
-      auto k_residue   = K - get<2>(subgroup_shape) * (K / get<2>(subgroup_shape));        // K - SUB_K * k_coord_max
       auto residue_mnk = make_tuple(m_max_coord, n_max_coord, k_residue);
 
-      Tensor accumulators = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM>, Int<FragsN>>{});
       clear(accumulators);
 
-      CollectiveMainloop collective_mma;
       // Perform the collective scoped MMA
       collective_mma(
         accumulators,
@@ -343,8 +351,6 @@ public:
         params.scheduler, work_tile_info, accumulators);
 
       if (TileScheduler::compute_epilogue(work_tile_info, params.scheduler)) {
-        CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
-        TiledMma tiled_mma;
         epilogue(
           problem_shape_MNKL,
           subgroup_shape,

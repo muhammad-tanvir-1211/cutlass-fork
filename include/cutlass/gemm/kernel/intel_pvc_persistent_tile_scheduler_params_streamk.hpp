@@ -84,10 +84,8 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     StreamK
   };
 
-  FastDivmodU64Pow2 divmod_cluster_shape_major_{};
-  FastDivmodU64Pow2 divmod_cluster_shape_minor_{};
   FastDivmodU64 divmod_batch_{};
-  FastDivmodU64 divmod_cluster_blk_major_{};
+  FastDivmodU64 divmod_blk_major_{};
 
   // We divide up the number of stream-K tiles amongst G groups of stream-K units.
   // The stream-K units within a group collaborate to comptue over the `sk_tiles / G`
@@ -292,65 +290,6 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
       return;
     }
 
-    bool do_separate_reduction = false; 
-    // should_perform_separate_reduction(
-    //   epilogue_subtile, sk_units, sk_tiles, dp_tiles, ctas_per_wave);
-
-    // Determine the number of stream-K groups that will be used. Choosing the
-    // fast moving dimension of the underlying grid.
-    /*uint32_t max_groups_problem = problem_blocks_n;
-
-    // Select the number of groups that will be use. We start with the maximum
-    // number of potential groups, and iterate down looking for a group size that
-    // evenly divides the stream-K units and tiles, and for which the resulting
-    // number of K tiles per stream-K unit remains above min_iters_per_sk_unit_
-
-    uint32_t groups = platform::min(max_groups_problem, uint32_t(max_sk_groups_));
-
-    // Grouping is disabled when separate reduction is used
-    // if (do_separate_reduction) {
-    //   groups = 1;
-    // }
-
-    uint32_t fallback_groups = 0;
-
-    auto sk_splits_too_small = [&](uint32_t g) {
-      // Check whether the number of K tiles computed per stream-K unit is less
-      // than min_iters_per_sk_unit_
-      auto total_sk_tiles = sk_tiles / g;
-      auto total_sk_k_tiles = total_sk_tiles * k_tiles_per_output_tile;
-      auto k_tiles_per_sk_unit = total_sk_k_tiles / (sk_units / g);
-      return k_tiles_per_sk_unit < min_iters_per_sk_unit_;
-    };
-
-    auto is_ideal_grouping = [&](uint32_t g) {
-      // An ideal grouping will evenly divide stream-K clusters, evenly divide
-      // stream-K tiles, and not result in stream-K splits that are too small.
-      return (sk_units % g == 0) && (sk_tiles % g == 0) && !sk_splits_too_small(g);
-    };
-
-    auto is_valid_grouping = [&](uint32_t g) {
-      // A grouping is valid, but not ideal, if it evenly divides the
-      // stream-K clusters and does not result in stream-K splits that are
-      // too small. Such a setting can be used as a fallback option in the
-      // case that an ideal grouping is not achievable
-      return sk_units % g == 0 && !sk_splits_too_small(g);
-    };
-
-    while (groups > 1 && !is_ideal_grouping(groups)) {
-      if (fallback_groups == 0 && is_valid_grouping(groups)) {
-        // Set fallback groups once in preference for a larger number of groups.
-        fallback_groups = groups;
-      }
-      --groups;
-    }
-
-    // If groups == 1, we did not find a group count that satisfies all criteria. If we have
-    // found a fallback group count, use this instead.
-    if (groups == 1 && fallback_groups > 0) {
-      groups = fallback_groups;
-    }*/
-
     uint32_t groups = max_sk_groups_;
 
     auto sk_units_per_group = sk_units / groups;
@@ -374,13 +313,6 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
 
     // Use separate reduction when we have less than one wave of output tiles (dp_tiles == 0)
     // and when each tile will be operated on by at least two stream-K units (sk_units > 2 * sk_tiles)
-    // if (do_separate_reduction) {
-    //   // Each reduction unit will reduce the partials of an epilogue subtile for
-    //   // a given output tile and compute the epilogue. Thus, there are as many reduction
-    //   // units as there are epilogue subtiles.
-    //   reduction_units = sk_tiles * epilogue_subtile;
-    // }
-    // else 
     if (decomposition_mode == DecompositionMode::Heuristic && sk_tiles < sk_units && sk_units % sk_tiles == 0) {
       // If the number of stream-K units is a multiple of the number of stream-K tiles, then
       // the problem can leverage a basic split-K decomposition for the stream-K tiles.
@@ -403,9 +335,7 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     divmod_sk_groups_ = FastDivmodU64(static_cast<uint64_t>(groups));
     divmod_sk_units_per_group_ = FastDivmodU64(static_cast<uint64_t>(sk_units / groups));
 
-    divmod_cluster_shape_major_ = FastDivmodU64Pow2(1);
-    divmod_cluster_shape_minor_ = FastDivmodU64Pow2(1);
-    divmod_cluster_blk_major_ = FastDivmodU64(problem_blocks_n);
+    divmod_blk_major_ = FastDivmodU64(problem_blocks_n);
 
     divmod_splits_ = FastDivmod(splits);
     units_per_problem_ = static_cast<uint32_t>(dp_units + sk_units);
@@ -469,7 +399,7 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     dim3 problem_blocks,
     KernelHardwareInfo hw_info
   ) {
-    uint32_t available_sms = 32;//hw_info.sm_count / 8;
+    uint32_t available_sms = 1 << find_log2(hw_info.sm_count / 8);
     // printf("available_sms: %d\n", available_sms);
     auto possibly_truncate = [&](int x, int y) {
       return static_cast<unsigned int>(platform::min(x, y));
