@@ -330,8 +330,7 @@ template <int ThreadsPerBlock, class FrgTensorC>
     // Thus, the start of the reduction space is the same across all threads in a warp group.
     int reduction_offset =
       (cute::size<0>(TileShape{}) * cute::size<1>(TileShape{}) * reduction_tile_idx * num_accumulator_mtxs) +
-      reduction_peer_offset +
-      (size(accumulators) * barrier_group_thread_idx * ThreadsPerBlock);
+      reduction_peer_offset;
 
     ElementAccumulator* group_reduction_workspace = reinterpret_cast<ElementAccumulator*>(params.reduction_workspace_) + reduction_offset;
 
@@ -739,7 +738,7 @@ CUTLASS_DEVICE
     work_tile_info.N_idx = work_idx_n;
     work_tile_info.L_idx = work_idx_l;
 
-    // if(linear_idx >= 32 && ThreadIdxX() == 0)
+    // if(linear_idx < 32 && ThreadIdxX() == 0)
     //   printf("BlockID: %lu | k_tile_count: %d | M_idx: %lu | N_idx: %lu | K_idx: %lu | L_idx: %lu | ctas_per_grid_dim: %lu | output_tile_id: %lu\n",
     //         BlockIdxY(), work_tile_info.k_tile_count, work_tile_info.M_idx, work_tile_info.N_idx, work_tile_info.K_idx,
     //         work_tile_info.L_idx, remainder, output_tile_id);

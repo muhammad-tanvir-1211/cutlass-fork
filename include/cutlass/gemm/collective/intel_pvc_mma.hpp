@@ -231,7 +231,7 @@ struct CollectiveMma<
     //
     // Mainloop
     //
-    const int k_start_idx = crd2idx((*k_tile_iter), make_shape(K));
+    const int k_start_idx = crd2idx((*k_tile_iter), make_shape(K)) * get<2>(SubgroupTileShape{});
     int prefetch_k = k_start_idx;
 
     for (int i = 0; i < DispatchPolicy::Stages; i++) {
@@ -241,13 +241,14 @@ struct CollectiveMma<
     }
 
     for (int k_tile = 0, k = k_start_idx; k_tile < k_tile_count;
-         ++k_tile, k += get<2>(SubgroupTileShape{}), prefetch_k += get<2>(SubgroupTileShape{})) {
+         ++k_tile, k += get<2>(SubgroupTileShape{})) {
       // Copy gmem to rmem for the first k_tile
       copy(mainloop.gmem_tiled_copy_a, gA(_, _, k), tAr);
       copy(mainloop.gmem_tiled_copy_b, gB(_, _, k), tBr);
 
       prefetch(mainloop.gmem_tiled_copy_a, tAi(_, _, prefetch_k));
       prefetch(mainloop.gmem_tiled_copy_b, tBi(_, _, prefetch_k));
+      prefetch_k += get<2>(SubgroupTileShape{});
 
       cute::gemm(tiled_mma, accum, tAr_view, tBr_view, src_accum);
     }

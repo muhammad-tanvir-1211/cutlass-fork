@@ -244,6 +244,8 @@ struct ExampleRunner {
       GPU_Clock timer;
       timer.start();
       for (int i = 0; i < options.iterations; ++i) {
+        if(workspace_size > 0)
+          gemm_op.initialize(arguments, workspace.get());
         gemm_op.run();
       }
       syclcompat::wait();

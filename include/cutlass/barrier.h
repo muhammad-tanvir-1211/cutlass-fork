@@ -98,7 +98,7 @@ protected:
     int state = 0;
 
 #ifdef SYCL_INTEL_TARGET
-    auto atm = sycl::atomic_ref<int, sycl::memory_order::relaxed, 
+    auto atm = sycl::atomic_ref<int, sycl::memory_order::acq_rel, 
                                      sycl::memory_scope::device, 
                                      sycl::access::address_space::global_space>(*ptr);
     return atm.load(sycl::memory_order::acquire);
