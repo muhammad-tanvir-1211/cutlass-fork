@@ -160,10 +160,9 @@ public:
 
     if (thread_idx == 0)
     {
-        //printf("BlockID: %lu | wait_eq: %d\n", BlockIdxY(), val);
         // Spin-loop
         #pragma unroll 1
-        while(ld_acquire(flag_ptr) != val) {break;}
+        while(ld_acquire(flag_ptr) != val) {}
     }
     Sync::sync();
   }
@@ -175,7 +174,6 @@ public:
 
     if (thread_idx == 0)
     {
-        //printf("BlockID: %lu | wait_eq_reset: %d\n", BlockIdxY(), val);
         // Spin-loop
         #pragma unroll 1
         while(atomicCAS(flag_ptr, val, 0) != val) {}
@@ -194,7 +192,6 @@ public:
 
     if (thread_idx == 0)
     {
-      //printf("BlockID: %lu | arrive_inc_val: %d\n", BlockIdxY(), val);
       red_release(flag_ptr, val);
     }
   }

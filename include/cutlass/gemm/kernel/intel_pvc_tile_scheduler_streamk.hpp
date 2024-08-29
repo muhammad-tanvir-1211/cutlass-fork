@@ -294,7 +294,7 @@ template <int SubgroupSize, class FrgTensorC>
     uint32_t num_barriers = 1,
     uint32_t barrier_idx = 0) {
     static constexpr uint32_t Offset = static_cast<int>(cutlass::arch::ReservedNamedBarriers::StreamkBarrier0);
-    static constexpr uint32_t MaxNumNamedBarriers = 2;
+    static constexpr uint32_t MaxNumNamedBarriers = 1;
     using BarrierManager = NamedBarrierManager<SubgroupSize, Offset, MaxNumNamedBarriers>;
     return fixup_helper<SubgroupSize, FrgTensorC, BarrierManager>(
       params, work_tile_info, subgroup_id, accumulators, num_barriers, barrier_idx);
@@ -371,7 +371,7 @@ template <int SubgroupSize, class FrgTensorC>
       }
       else {
         // Wait until the preceding split added its accumulators
-        BarrierManager::wait_eq(barrier_idx, lock_workspace, barrier_group_thread_idx, lock_idx, work_tile_info.K_idx);
+        BarrierManager::wait_eq(barrier_idx, lock_workspace, ThreadIdxX(), lock_idx, work_tile_info.K_idx);
 
         // Perform reduction in workspace
         BlockStripedReduceT::reduce(reduction_workspace_array, *accumulator_array, barrier_group_thread_idx);
@@ -382,16 +382,16 @@ template <int SubgroupSize, class FrgTensorC>
       int32_t increment = work_tile_info.k_tile_count;
 
       // Signal our arrival
-      BarrierManager::arrive_inc(barrier_idx, lock_workspace, barrier_group_thread_idx, lock_idx, increment);
+      BarrierManager::arrive_inc(barrier_idx, lock_workspace, ThreadIdxX(), lock_idx, increment);
     }
     else {
       if (params.reduction_mode_ == ReductionMode::Deterministic) {
         // Wait until the preceding split added its accumulators
-        BarrierManager::wait_eq(barrier_idx, lock_workspace, barrier_group_thread_idx, lock_idx, work_tile_info.K_idx);
+        BarrierManager::wait_eq(barrier_idx, lock_workspace, ThreadIdxX(), lock_idx, work_tile_info.K_idx);
       }
       else {
         // Wait unitl the first split has stored its accumulators
-        BarrierManager::wait_lt(barrier_idx, lock_workspace, barrier_group_thread_idx, lock_idx, 1);
+        BarrierManager::wait_lt(barrier_idx, lock_workspace, ThreadIdxX(), lock_idx, 1);
       }
 
       // The block computing the final split for the tile adds previously-reduced partials
