@@ -91,8 +91,7 @@ class GemmUniversalAdapter;
 template <class GemmKernel_>
 class GemmUniversalAdapter<
   GemmKernel_,
-  // cute::enable_if_t<gemm::detail::IsCutlass3GemmKernel<GemmKernel_>::value>>
-  cute::enable_if_t<true>>
+  cute::enable_if_t<gemm::detail::IsCutlass3GemmKernel<GemmKernel_>::value>>
 {
 public:
   using GemmKernel = GemmKernel_;
@@ -506,7 +505,7 @@ public:
 ////////////////////////////// CUTLASS 2.x API /////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 
-/*template <class GemmKernel_>
+template <class GemmKernel_>
 class GemmUniversalAdapter<
   GemmKernel_,
   cute::enable_if_t<not gemm::detail::IsCutlass3GemmKernel<GemmKernel_>::value>>
@@ -667,7 +666,7 @@ public:
 
     return status;
   }
-};*/
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 
