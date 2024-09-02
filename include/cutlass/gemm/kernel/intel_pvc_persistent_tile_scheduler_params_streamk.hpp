@@ -143,18 +143,6 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
   // ktile start from even for each cta
   uint32_t ktile_start_alignment_count { 1u };
 
-  // Returns the maximum number of peers that can collaborate on a given output tile
-  CUTLASS_HOST_DEVICE
-  static uint32_t
-  max_peers_per_tile(uint64_t sk_units, uint64_t sk_tiles) {
-    // When we can divide up our SK units to SK tiles evenly, the number of peers
-    // per SK tile is exactly (sk_units_ / sk_tiles_). In cases where this division
-    // is not exact, some tiles will need to be covered by additional SK units. Because
-    // the extra work can occur at both the beginning and the end of the SK tile, at
-    // most 2 extra peers will be needed.
-    return static_cast<uint32_t>(sk_units / sk_tiles + 2);
-  }
-
   // Initializes members. This variant of the method should only be used when
   // problem_shape and tile_shape contain modes of only rank 1.
   void
@@ -397,14 +385,17 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
   static dim3
   get_grid_shape(
     dim3 problem_blocks,
-    KernelHardwareInfo hw_info
+    KernelHardwareInfo hw_info,
+    bool truncate_range = true
   ) {
     uint32_t available_sms = 1 << find_log2(hw_info.sm_count / 8);
-    // printf("available_sms: %d\n", available_sms);
     auto possibly_truncate = [&](int x, int y) {
-      return static_cast<unsigned int>(platform::min(x, y));
+      if(truncate_range)
+        return static_cast<unsigned int>(platform::min(x, y));
+      else
+        return static_cast<unsigned int>(x);
     };
-    return dim3{1, possibly_truncate(available_sms, problem_blocks.x * problem_blocks.y * problem_blocks.z), 1};
+    return dim3{possibly_truncate(available_sms, problem_blocks.x * problem_blocks.y * problem_blocks.z), 1, 1};
   }
 
   // Returns the number of stream-K tiles that will be computed amongst `output_tiles` total

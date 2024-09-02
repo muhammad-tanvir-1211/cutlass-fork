@@ -91,8 +91,6 @@ public:
   using EpilogueArguments = typename CollectiveEpilogue::Arguments;
   using EpilogueParams = typename CollectiveEpilogue::Params;
 
-//   static_assert(ArchTag::kMinComputeCapability >= 90);
-
   using TileSchedulerTag = TileScheduler_;
   using TileScheduler = typename detail::TileSchedulerSelector<
     TileScheduler_, ArchTag, TileShape, ClusterShape>::Scheduler;
@@ -108,13 +106,6 @@ public:
   static constexpr int FragsN = CollectiveMainloop::FragsN;
 
   static constexpr int VecC = CollectiveMainloop::VecC;
-
-  /// Register requirement for Load and Math WGs
-//   static constexpr uint32_t LoadRegisterRequirement = 40;
-//   static constexpr uint32_t MmaRegisterRequirement = 232;
-
-  // 1 stage ordered sequence between mainloop and epilogue producer load threads
-//   using LoadWarpOrderBarrier = cutlass::OrderedSequenceBarrier<1,2>;
 
   // Kernel level shared memory storage
   struct SharedStorage {
@@ -173,28 +164,15 @@ public:
 
     // Calculate workspace pointers
     uint8_t* workspace_ptr = reinterpret_cast<uint8_t*>(workspace);
-    size_t workspace_offset = 0;
 
-    void* scheduler_workspace = workspace_ptr;
-    workspace_offset += TileScheduler::template get_workspace_size<ProblemShape, ElementAccumulator>(
-      args.scheduler, args.problem_shape, args.hw_info);
-
-    void* epilogue_workspace = workspace_ptr + workspace_offset;
-    workspace_offset += CollectiveEpilogue::get_workspace_size(args.problem_shape, args.epilogue);
-
-    void* mainloop_workspace = nullptr;
-    // Precompute the sub tiles numbers in epilogue, pass into tile scheduler.  Therefore it will be used
-    // in separate reduction scheme for streamk case, NumEpilogueSubTiles default value is 1, which means
-    // subtile will not be used, therefore separate reduction will not be enabled.
-    // constexpr uint32_t NumEpilogueSubTiles = CollectiveEpilogue::get_store_pipe_increment(TileShape{});
     TileSchedulerParams scheduler = TileScheduler::to_underlying_arguments(
-      problem_shape_MNKL, TileShape{}, hw_info, args.scheduler, scheduler_workspace);
+      problem_shape_MNKL, TileShape{}, hw_info, args.scheduler, workspace_ptr);
 
     return {
       args.mode,
       problem_shape,
-      CollectiveMainloop::to_underlying_arguments(args.problem_shape, args.mainloop, mainloop_workspace),
-      CollectiveEpilogue::to_underlying_arguments(args.problem_shape, args.epilogue, epilogue_workspace),
+      CollectiveMainloop::to_underlying_arguments(args.problem_shape, args.mainloop, workspace_ptr),
+      CollectiveEpilogue::to_underlying_arguments(args.problem_shape, args.epilogue, workspace_ptr),
       hw_info,
       scheduler,
       workspace
@@ -211,10 +189,8 @@ public:
   static size_t
   get_workspace_size(Arguments const& args) {
     size_t workspace_size = 0;
-
     workspace_size += TileScheduler::template get_workspace_size<ProblemShape, ElementAccumulator>(
       args.scheduler, args.problem_shape, args.hw_info);
-    workspace_size += CollectiveEpilogue::get_workspace_size(args.problem_shape, args.epilogue);
     return workspace_size;
   }
 
@@ -223,21 +199,9 @@ public:
     CudaHostAdapter* cuda_adapter = nullptr) {
     Status status = Status::kSuccess;
     uint8_t* workspace_ptr = reinterpret_cast<uint8_t*>(workspace);
-    size_t workspace_offset = 0;
 
     status = TileScheduler::template initialize_workspace<ProblemShape, ElementAccumulator>(
-      args.scheduler, workspace_ptr + workspace_offset, args.problem_shape, args.hw_info);
-    workspace_offset += TileScheduler::template get_workspace_size<ProblemShape, ElementAccumulator>(
-      args.scheduler, args.problem_shape, args.hw_info);
-    if (status != Status::kSuccess) {
-      return status;
-    }
-
-    status = CollectiveEpilogue::initialize_workspace(args.problem_shape, args.epilogue, workspace_ptr + workspace_offset, stream, cuda_adapter);
-    workspace_offset += CollectiveEpilogue::get_workspace_size(args.problem_shape, args.epilogue);
-    if (status != Status::kSuccess) {
-      return status;
-    }
+      args.scheduler, workspace_ptr, args.problem_shape, args.hw_info);
 
     return status;
   }
@@ -246,7 +210,6 @@ public:
   static dim3
   get_grid_shape(Params const& params) {
     // Given device SM count, set grid size s.t. we do not launch more thread blocks than we can run concurrently
-    // TileSchedulerArguments args{};
     return TileScheduler::get_grid_shape(params.problem_shape, TileShape{}, params.hw_info);
   }
 
@@ -262,7 +225,6 @@ public:
     using X = Underscore;
 
     // Preconditions
-    // static_assert(size(TiledMma{}) == 256, "Cooperative kernel must have TiledMMA operating using 256 threads.");
     static_assert(size<0>(TileShape{}) >= 128,
         "Cooperative kernel requires Tile Size to be greater than or equal to 128 along the M-dimension.");
 
@@ -305,6 +267,7 @@ public:
 
     const int m_offset = sub_group_id / CollectiveMainloop::sg_per_wg_n * get<0>(subgroup_shape);
     const int n_offset = sub_group_id % CollectiveMainloop::sg_per_wg_n * get<1>(subgroup_shape);
+
     while (work_tile_info.is_valid()) {
       const int m_coord = work_tile_info.M_idx * get<0>(workgroup_shape) + m_offset;
       const int n_coord = work_tile_info.N_idx * get<1>(workgroup_shape) + n_offset;

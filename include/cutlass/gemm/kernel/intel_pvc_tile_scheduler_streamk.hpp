@@ -79,8 +79,7 @@ public:
     CUTLASS_HOST_DEVICE
     bool
     is_valid() const {
-      // A work tile that computes no K tiles is invalid unless it is a separate-reduction work tile
-      // (which only performs reduction and epilogue)
+      // A work tile that computes no K tiles is invalid
       return k_tile_count > 0;
     }
 
@@ -132,9 +131,9 @@ public:
     // The splitting factor to be used in a split-K decomposition of the problem.
     // If this is set to a value greater than 1, stream-K decomposition logic
     // is bypassed in favor of a split-K decomposition.
-    int splits = 1;
+    int splits = 16;
     ReductionMode reduction_mode = ReductionMode::Deterministic;
-    DecompositionMode decomposition_mode = DecompositionMode::StreamK;
+    DecompositionMode decomposition_mode = DecompositionMode::SplitK;
   };
 
   // Sink scheduler params as a member
@@ -185,8 +184,7 @@ public:
 
   CUTLASS_HOST_DEVICE
   PersistentTileSchedulerIntelPVCStreamK(Params const& params_) : scheduler_params(params_) {
-    // current_work_linear_idx_ = uint64_t(BlockIdxX()) + uint64_t(BlockIdxY()) * uint64_t(GridDimX());
-    current_work_linear_idx_ = uint64_t(BlockIdxY());
+    current_work_linear_idx_ = uint64_t(BlockIdxX());
   }
 
   CUTLASS_DEVICE
@@ -403,7 +401,6 @@ template <int ThreadsPerBlock, class FrgTensorC>
     // `is_final_split` will be set to `true` for the following scenarios, all of which must compute the epilogue:
     //  1. The tile is computed in data-parallel mode
     //  2. The tile is computed in split-/stream-K mode and this work unit represents the final split of the tile
-    //  3. The tile is computed in split-/stream-K mode and separate reduction is used, and this is a separate reduction unit
     return work_tile_info.is_valid() &&
             work_tile_info.is_final_split(params.divmod_tiles_per_output_tile_.divisor);
   }
@@ -519,19 +516,7 @@ CUTLASS_DEVICE
     WorkTileInfo& work_tile_info) {
 
     uint64_t output_tile_id = linear_idx;
-    if (linear_idx >= params.units_per_problem_ * params.divmod_splits_.divisor) {
-      // Separate-reduction work
-      /*auto cluster_size = params.get_cluster_size();
-      // Divide up the linearized separate reduction units into clusters
-      auto cluster_linear_reduction_unit_idx = params.div_cluster_size((linear_idx - params.units_per_problem_));
-      uint64_t cluster_tile_idx, epi_subtile_idx;
-      params.divmod_epilogue_subtile_(cluster_tile_idx, epi_subtile_idx, cluster_linear_reduction_unit_idx);
-      // Bring the linearized tile ID back into the space of tiles, rather than clusters
-      output_tile_id = cluster_tile_idx * cluster_size;
-
-      work_tile_info.setup_separate_reduction(epi_subtile_idx);*/
-    }
-    else if (linear_idx >= params.sk_units_ && params.divmod_splits_.divisor == 1) {
+    if (linear_idx >= params.sk_units_ && params.divmod_splits_.divisor == 1) {
       // Data-parallel work
       output_tile_id = linear_idx - params.sk_units_ + params.sk_tiles_;
       work_tile_info.K_idx = 0;
@@ -539,38 +524,10 @@ CUTLASS_DEVICE
       work_tile_info.k_tile_remaining = params.divmod_tiles_per_output_tile_.divisor;
     }
     else {
-      // In the CUTLASS 2.x implementation of stream K, stream-K work is assigned to each stream-K
-      // threadblock individually. For the most part, the set of K iterations corresponding to stream-K
-      // work was divided amongst stream-K threadblocks, and a threadblock determined which tile
-      // it would compute a (potentially-partial) output tile for based on the space of k iterations
-      // assigned to it. This often results in stream-K threadblocks processing tiles with different
-      // offsets in the K dimension from one another. This can reduce locality, but is lmitied to the
-      // (generally few) waves of threadblocks assigned to compute stream-K work.
-      //
-      // With the introduction of threadblock clusters, there is additional benefit to maintaining
-      // locality in the K dimension: shared portions of operands can be multicasted to threadblocks
-      // within a cluster. Thus, we would like to ensure that the assignment of stream-K work to
-      // threadblocks respects the ability to perform multicasting.
-      //
-      // To do so, we divide up the linearized stream-K units into clusters and share the same K
-      // offsets for work within clusters.
 
-      // auto cluster_linear_work_idx = params.div_cluster_size(linear_idx);
-
-      // uint64_t group_idx;
-      // params.divmod_sk_groups_(cluster_linear_work_idx, group_idx, cluster_linear_work_idx);
-
-      // // Determine whether we are in a "big group" that will process an additional
-      // // stream-K cluster tile.
-      // auto sk_cluster_tiles = params.div_cluster_size(params.sk_tiles_);
-      // auto sk_tiles_in_group = params.divmod_sk_groups_.divide(params.sk_tiles_);
-      // if (group_idx < params.big_groups_) {
-      //   ++sk_cluster_tiles_in_group;
-      // }
-
-      // // Determine whether we are in a "big unit" within the group, that will process
-      // // an additional K chunk in the group.
-      auto sk_tiles_in_group = params.sk_tiles_;//sk_cluster_tiles_in_group * params.get_cluster_size();
+      // Determine whether we are in a "big unit" within the group, that will process
+      // an additional K chunk in the group.
+      auto sk_tiles_in_group = params.sk_tiles_;
       auto k_tiles_in_group = sk_tiles_in_group * params.divmod_tiles_per_output_tile_.divisor;
       auto k_tiles_per_unit_in_group = params.divmod_sk_units_per_group_.divide(k_tiles_in_group);
       // auto big_units_in_group = params.div_cluster_size(
@@ -696,17 +653,6 @@ CUTLASS_DEVICE
       // overall linearized space.
       output_tile_id = output_tile_id_in_group * params.divmod_sk_groups_.divisor;
 
-      // Bring the linearized tile ID back into the space of tiles, rather than clusters
-      // output_tile_id *= params.get_cluster_size();
-
-      // The final linearized tile ID is in units of the cluster dimension over which we rasterize.
-      // if (params.raster_order_ == RasterOrder::AlongN) {
-      //   output_tile_id += cta_n_in_cluster * params.divmod_cluster_shape_minor_.divisor;
-      // }
-      // else {
-      //   output_tile_id += cta_m_in_cluster * params.divmod_cluster_shape_minor_.divisor;
-      // }
-
       // The unit's starting k iteration in the current tile is either the starting
       // iteration for the tile as a whole, or the starting k iteration for the unit
       // as a whole (if the latter is greater than the former).
@@ -740,59 +686,11 @@ CUTLASS_DEVICE
     work_tile_info.L_idx = work_idx_l;
 
     // if(ThreadIdxX() == 0)
-    //   printf("BlockID: %lu | k_tile_count: %d | M_idx: %lu | N_idx: %lu | K_idx: %lu | L_idx: %lu | ctas_per_grid_dim: %lu | output_tile_id: %lu | unit_iter_start: %d | unit_iter_end: %d | tile_start: %d | tile_end: %d | split: %lu\n",
-    //         BlockIdxY(), work_tile_info.k_tile_count, work_tile_info.M_idx, work_tile_info.N_idx, work_tile_info.K_idx,
-    //         work_tile_info.L_idx, remainder, output_tile_id, unit_iter_start, unit_iter_end, tile_iter_start, tile_iter_end, split);
+    //   printf("BlockID: %lu | k_tile_count: %d | M_idx: %lu | N_idx: %lu | K_idx: %lu | L_idx: %lu | ctas_per_grid_dim: %lu | output_tile_id: %lu\n",
+    //         BlockIdxX(), work_tile_info.k_tile_count, work_tile_info.M_idx, work_tile_info.N_idx, work_tile_info.K_idx,
+    //         work_tile_info.L_idx, remainder, output_tile_id);
   }
 
-  // Returns the starting and ending peer ID of this tile
-  CUTLASS_HOST_DEVICE
-  static auto
-  tile_peer_range(Params const& params, uint32_t tile_idx, uint32_t cur_k_tile) {
-    auto tile_idx_in_cluster_path = tile_idx;
-    auto start_k_tile = params.divmod_tiles_per_output_tile_.divisor * tile_idx_in_cluster_path;
-    auto end_k_tile = start_k_tile + params.divmod_tiles_per_output_tile_.divisor - 1;
-    auto big_unit_k_tiles = params.big_units_ * (params.divmod_k_tiles_per_sk_unit_.divisor + 1);
-
-    auto adjust_unit = [&](uint32_t k_tile, uint32_t unit_idx, uint32_t k_tiles_per_unit) {
-      auto unit_k_start = unit_idx * k_tiles_per_unit;
-      auto unit_k_end = unit_k_start + k_tiles_per_unit;
-      if (k_tile - start_k_tile < Params::min_iters_per_sk_unit_ &&
-          unit_k_end - start_k_tile < Params::min_iters_per_sk_unit_) {
-        // k_tile is within the first min_iters_per_sk_unit_ K tiles of this output tile,
-        // and the stream-K unit computes fewer than min_iters_per_sk_unit_ K tiles for this
-        // output tile. This work will thus be subsumed by the next stream-K unit.
-        ++unit_idx;
-      }
-
-      if (end_k_tile + 1 - k_tile < Params::min_iters_per_sk_unit_ &&
-          end_k_tile + 1 - unit_k_start < Params::min_iters_per_sk_unit_) {
-        // k_tile is within the last min_iters_per_sk_unit_ K tiles of this output tile,
-        // and the stream-K unit computes fewer than min_iters_per_sk_unit_ K tiles for this
-        // output tile. This work will thus be subsumed by the previous stream-K unit.
-        --unit_idx;
-      }
-
-      return unit_idx;
-    };
-
-    // Lambda to find the ID of the stream-K unit that computes this K tile
-    auto find_unit = [&](uint32_t k_tile) {
-      if (k_tile < big_unit_k_tiles) {
-        // The tile is within the "big unit range"
-        auto unit_idx = params.divmod_k_tiles_per_sk_big_unit_.divide(k_tile);
-        return static_cast<uint64_t>(adjust_unit(k_tile, unit_idx, params.divmod_k_tiles_per_sk_big_unit_.divisor));
-      }
-      else {
-        // The tile is after the "big unit range." Account for this by finding the "normal unit"
-        // that it belongs to, and then offsetting by the number of big units
-        auto unit_idx = params.divmod_k_tiles_per_sk_unit_.divide(k_tile - big_unit_k_tiles) + params.big_units_;
-        return static_cast<uint64_t>(adjust_unit(k_tile, unit_idx, params.divmod_k_tiles_per_sk_unit_.divisor));
-      }
-    };
-
-    return cute::make_tuple(find_unit(start_k_tile), find_unit(cur_k_tile), find_unit(end_k_tile));
-  }
 };
 
 } // namespace cutlass::gemm::kernel::detail
