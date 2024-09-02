@@ -131,9 +131,9 @@ public:
     // The splitting factor to be used in a split-K decomposition of the problem.
     // If this is set to a value greater than 1, stream-K decomposition logic
     // is bypassed in favor of a split-K decomposition.
-    int splits = 16;
+    int splits = 1;
     ReductionMode reduction_mode = ReductionMode::Deterministic;
-    DecompositionMode decomposition_mode = DecompositionMode::SplitK;
+    DecompositionMode decomposition_mode = DecompositionMode::Heuristic;
   };
 
   // Sink scheduler params as a member
@@ -669,6 +669,11 @@ CUTLASS_DEVICE
     }
 
     uint64_t work_idx_l, remainder;
+
+    if(params.divmod_splits_.divisor > 1) {
+      output_tile_id %= params.units_per_problem_;
+    }
+
     params.divmod_batch_(work_idx_l, remainder, output_tile_id);
 
     uint64_t cta_per_grid_dim = remainder; //params.divmod_cluster_shape_minor_.divide(remainder);
@@ -677,9 +682,7 @@ CUTLASS_DEVICE
                                           cta_per_grid_dim,
                                           params.divmod_blk_major_
                                         );
-    if(params.divmod_splits_.divisor > 1) {
-      work_idx_l /= params.divmod_splits_.divisor;
-    }
+
     // Set the M, N, and L block offsets
     work_tile_info.M_idx = work_idx_m;
     work_tile_info.N_idx = work_idx_n;

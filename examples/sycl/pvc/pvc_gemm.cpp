@@ -47,6 +47,7 @@
 #include "cutlass/util/reference/device/tensor_compare.h"
 #include "common.h"
 
+#include "cutlass/gemm/kernel/intel_pvc_persistent_tile_scheduler_params_streamk.hpp"
 using namespace cute;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -219,7 +220,9 @@ struct ExampleRunner {
       problem_size,
       {block_A.get(), stride_A, block_B.get(), stride_B},
       {{options.alpha, options.beta}, block_C.get(), stride_C, block_D.get(), stride_D},
-      hw_info
+      hw_info,
+      {1, 
+      cutlass::gemm::kernel::detail::PersistentTileSchedulerIntelPVCStreamKParams::DecompositionMode::StreamK}
     };
 
     Gemm gemm_op;
