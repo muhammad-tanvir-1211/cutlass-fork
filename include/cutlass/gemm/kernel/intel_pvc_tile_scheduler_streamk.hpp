@@ -322,7 +322,6 @@ template <int ThreadsPerBlock, class FrgTensorC>
     auto lock_idx = (tile_idx * num_barriers) + barrier_idx;
 
     auto reduction_tile_idx = tile_idx;
-    auto [first_peer_id, my_peer_id, last_peer_id] = tile_peer_range(params, tile_idx, static_cast<uint32_t>(work_tile_info.K_idx));
     auto reduction_peer_offset = 0;
     int barrier_group_thread_idx = ThreadIdxX();
 
@@ -386,7 +385,7 @@ template <int ThreadsPerBlock, class FrgTensorC>
         BarrierManager::wait_eq(barrier_idx, lock_workspace, barrier_group_thread_idx, lock_idx, work_tile_info.K_idx);
       }
       else {
-        // Wait unitl the first split has stored its accumulators
+        // Wait until the first split has stored its accumulators
         BarrierManager::wait_lt(barrier_idx, lock_workspace, barrier_group_thread_idx, lock_idx, 1);
       }
 
@@ -732,16 +731,18 @@ CUTLASS_DEVICE
                                           cta_per_grid_dim,
                                           params.divmod_blk_major_
                                         );
-
+    if(params.divmod_splits_.divisor > 1) {
+      work_idx_l /= params.divmod_splits_.divisor;
+    }
     // Set the M, N, and L block offsets
     work_tile_info.M_idx = work_idx_m;
     work_tile_info.N_idx = work_idx_n;
     work_tile_info.L_idx = work_idx_l;
 
-    // if(linear_idx < 32 && ThreadIdxX() == 0)
-    //   printf("BlockID: %lu | k_tile_count: %d | M_idx: %lu | N_idx: %lu | K_idx: %lu | L_idx: %lu | ctas_per_grid_dim: %lu | output_tile_id: %lu\n",
+    // if(ThreadIdxX() == 0)
+    //   printf("BlockID: %lu | k_tile_count: %d | M_idx: %lu | N_idx: %lu | K_idx: %lu | L_idx: %lu | ctas_per_grid_dim: %lu | output_tile_id: %lu | unit_iter_start: %d | unit_iter_end: %d | tile_start: %d | tile_end: %d | split: %lu\n",
     //         BlockIdxY(), work_tile_info.k_tile_count, work_tile_info.M_idx, work_tile_info.N_idx, work_tile_info.K_idx,
-    //         work_tile_info.L_idx, remainder, output_tile_id);
+    //         work_tile_info.L_idx, remainder, output_tile_id, unit_iter_start, unit_iter_end, tile_iter_start, tile_iter_end, split);
   }
 
   // Returns the starting and ending peer ID of this tile

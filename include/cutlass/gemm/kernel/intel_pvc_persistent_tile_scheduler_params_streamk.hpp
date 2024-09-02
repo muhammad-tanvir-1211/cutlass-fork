@@ -705,8 +705,11 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
 
     divmod_batch_ = FastDivmodU64(blocks_m * blocks_n);
     divmod_tiles_per_output_tile_ = FastDivmod(k_tiles_per_output_tile);
+    divmod_sk_groups_ = FastDivmodU64(1u);
     divmod_splits_ = FastDivmod(splits);
+    divmod_blk_major_ = FastDivmodU64(blocks_n);
     units_per_problem_ = blocks_m * blocks_n * blocks_l;
+    big_units_ = k_tiles_per_output_tile % splits;
     reduction_workspace_ = reduction_workspace;
     reduction_mode_ = reduction_mode;
     divmod_k_tiles_per_sk_unit_ = FastDivmod(k_tiles_per_output_tile / splits);
@@ -714,6 +717,7 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     // No stream-K work is performed for "basic" data-parallel and split-K decompositions
     sk_tiles_ = 0;
     sk_units_ = 0;
+    divmod_sk_units_per_group_ = FastDivmodU64(blocks_m * blocks_n * blocks_l);
   }
 
   private:

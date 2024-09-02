@@ -43,6 +43,7 @@ set(DPCPP_COMPILE_ONLY_FLAGS "")
 
 if(NOT "${DPCPP_SYCL_TARGET}" STREQUAL "")
   list(APPEND DPCPP_FLAGS "-fsycl-targets=${DPCPP_SYCL_TARGET};")
+  list(APPEND DPCPP_FLAGS "-Xspirv-translator;--spirv-ext=+SPV_INTEL_split_barrier;-DSPV_INTEL_split_barrier;")
 endif()
 
 if(NOT "${DPCPP_USER_FLAGS}" STREQUAL "")
