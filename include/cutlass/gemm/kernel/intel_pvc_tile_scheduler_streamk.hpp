@@ -339,7 +339,7 @@ template <int ThreadsPerBlock, class FrgTensorC>
 
     // The number of tiles for which reduction is required is either:
     //   (a) the total number of output tiles (in the case of split-K)
-    //   (b) the number of stream-K tiles (potentially multiplied by peer count if using separate reduction)
+    //   (b) the number of stream-K tiles
     // To calculate the total number of output tiles in the split-K case, we
     // note that, in the split-K case, the units_per_problem_ member of Params will be
     // the total number of output tiles.
@@ -358,8 +358,7 @@ template <int ThreadsPerBlock, class FrgTensorC>
 
     if (!compute_epilogue(work_tile_info, params)) {
       if (work_tile_info.K_idx == 0) {
-        // The first peer initializes the workspace partials in the non-separate-reduction case,
-        // and all peers write to their own location in workspace when using separate reduction
+        // The first peer initializes the workspace partials
         BlockStripedReduceT::store(reduction_workspace_array, *accumulator_array, barrier_group_thread_idx);
       }
       else {
@@ -370,8 +369,8 @@ template <int ThreadsPerBlock, class FrgTensorC>
         BlockStripedReduceT::reduce(reduction_workspace_array, *accumulator_array, barrier_group_thread_idx);
       }
 
-      // If separate reduction is being performed, each participating stream-K unit increments the barrier
-      // by only 1. Otherwise, increment by the K tile count that this unit has processed.
+      // Each participating stream-K unit increments the barrier by the K tile count that this unit has
+      // processed.
       int32_t increment = work_tile_info.k_tile_count;
 
       // Signal our arrival
