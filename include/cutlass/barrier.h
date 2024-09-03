@@ -97,12 +97,12 @@ protected:
   {
     int state = 0;
 
-#ifdef SYCL_INTEL_TARGET
+#if defined (SYCL_INTEL_TARGET)
     auto atm = sycl::atomic_ref<int, sycl::memory_order::acq_rel, 
                                      sycl::memory_scope::device, 
                                      sycl::access::address_space::global_space>(*ptr);
     return atm.load(sycl::memory_order::acquire);
-#elif defined (__CUDA_ARCH__ >= 700)
+#elif (__CUDA_ARCH__ >= 700)
     /// SM70 and newer use memory consistency qualifiers
 
     // Acquire pattern using acquire modifier

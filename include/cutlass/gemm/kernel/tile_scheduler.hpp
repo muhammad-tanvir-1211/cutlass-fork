@@ -130,6 +130,7 @@ struct TileSchedulerSelector<
   using Scheduler = PersistentTileSchedulerSm90StreamK<TileShape, ClusterShape>;
 };
 
+#if defined (SYCL_INTEL_TARGET)
 template <
   class TileShape,
   class ClusterShape
@@ -142,6 +143,7 @@ struct TileSchedulerSelector<
   > {
   using Scheduler = PersistentTileSchedulerIntelPVCStreamK<TileShape>;
 };
+#endif
 
 template <
   class TileShape,
