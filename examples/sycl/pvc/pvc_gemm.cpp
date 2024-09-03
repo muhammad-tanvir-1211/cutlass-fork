@@ -221,8 +221,8 @@ struct ExampleRunner {
       {block_A.get(), stride_A, block_B.get(), stride_B},
       {{options.alpha, options.beta}, block_C.get(), stride_C, block_D.get(), stride_D},
       hw_info,
-      {1, 
-      cutlass::gemm::kernel::detail::PersistentTileSchedulerIntelPVCStreamKParams::DecompositionMode::StreamK}
+      {16, 
+      cutlass::gemm::kernel::detail::PersistentTileSchedulerIntelPVCStreamKParams::DecompositionMode::SplitK}
     };
 
     Gemm gemm_op;
@@ -248,7 +248,7 @@ struct ExampleRunner {
       timer.start();
       for (int i = 0; i < options.iterations; ++i) {
         if(workspace_size > 0)
-          gemm_op.initialize(arguments, workspace.get());
+          Gemm::GemmKernel::initialize_workspace(arguments, workspace.get());
         gemm_op.run();
       }
       syclcompat::wait();
