@@ -43,7 +43,6 @@ set(DPCPP_COMPILE_ONLY_FLAGS "")
 
 if(NOT "${DPCPP_SYCL_TARGET}" STREQUAL "")
   list(APPEND DPCPP_FLAGS "-fsycl-targets=${DPCPP_SYCL_TARGET};")
-  list(APPEND DPCPP_FLAGS "-Xspirv-translator;--spirv-ext=+SPV_INTEL_split_barrier;-DSPV_INTEL_split_barrier;")
 endif()
 
 if(NOT "${DPCPP_USER_FLAGS}" STREQUAL "")
@@ -56,6 +55,10 @@ if(NOT "${DPCPP_SYCL_ARCH}" STREQUAL "")
     list(APPEND DPCPP_FLAGS "--cuda-gpu-arch=${DPCPP_SYCL_ARCH}")
     list(APPEND DPCPP_COMPILE_ONLY_FLAGS; "-mllvm;-enable-global-offset=false;")
   endif()
+endif()
+
+if("${DPCPP_SYCL_TARGET}" STREQUAL "intel_gpu_pvc")
+  list(APPEND DPCPP_FLAGS "-Xspirv-translator;--spirv-ext=+SPV_INTEL_split_barrier;-DSPV_INTEL_split_barrier;")
 endif()
 
 if(UNIX)
