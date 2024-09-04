@@ -221,12 +221,8 @@ public:
   CUTLASS_DEVICE
   void
   operator()(Params const& params, char* smem_buf) {
-    using namespace cute;
-    using X = Underscore;
-
     // Preconditions
-    static_assert(size<0>(TileShape{}) >= 128,
-        "Cooperative kernel requires Tile Size to be greater than or equal to 128 along the M-dimension.");
+    CUTE_STATIC_ASSERT(is_static<WorkgroupTileShape>::value);
 
     static_assert(cute::rank(StrideA{}) == 3, "StrideA must be rank-3: [M, K, L]. If batch mode is not needed, set L stride to Int<0>.");
     static_assert(cute::rank(StrideB{}) == 3, "StrideB must be rank-3: [N, K, L]. If batch mode is not needed, set L stride to Int<0>.");

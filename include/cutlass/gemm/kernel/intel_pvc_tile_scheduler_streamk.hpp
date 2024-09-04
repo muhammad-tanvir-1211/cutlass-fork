@@ -155,7 +155,7 @@ public:
     static_assert(cute::is_static<TileShape>::value);
 
     auto problem_shape_mnkl = cute::append<4>(problem_shape, cute::Int<1>{});
-    dim3 problem_blocks = get_tiled_cta_shape_mnl(problem_shape_mnkl, tile_shape);
+    dim3 problem_blocks = get_tiled_wg_shape_mnl(problem_shape_mnkl, tile_shape);
     uint32_t k_tile_per_output_tile = cute::size(cute::ceil_div(cute::shape<2>(problem_shape_mnkl), cute::shape<2>(TileShape{})));
 
     Params params;
@@ -250,8 +250,8 @@ public:
   template <class ProblemShape>
   CUTLASS_HOST_DEVICE static
   dim3
-  get_tiled_cta_shape_mnl(ProblemShape problem_shape_mnkl, TileShape cta_shape) {
-    return Params::get_tiled_cta_shape_mnl(to_gemm_coord(problem_shape_mnkl), to_gemm_coord(cta_shape));
+  get_tiled_wg_shape_mnl(ProblemShape problem_shape_mnkl, TileShape cta_shape) {
+    return Params::get_tiled_wg_shape_mnl(to_gemm_coord(problem_shape_mnkl), to_gemm_coord(cta_shape));
   }
 
   // Given the cluster shape, computes the physical grid we should launch.
@@ -264,7 +264,7 @@ public:
     KernelHardwareInfo hw_info) {
 
     auto problem_shape_mnkl = cute::append<4>(problem_shape, cute::Int<1>{});
-    dim3 problem_blocks = get_tiled_cta_shape_mnl(problem_shape_mnkl, tile_shape);
+    dim3 problem_blocks = get_tiled_wg_shape_mnl(problem_shape_mnkl, tile_shape);
 
     return Params::get_grid_shape(
       problem_blocks,
@@ -428,7 +428,7 @@ template <int ThreadsPerBlock, class FrgTensorC>
 
     TileShape tile_shape;
 
-    dim3 problem_blocks = get_tiled_cta_shape_mnl(problem_shape_mnkl, tile_shape);
+    dim3 problem_blocks = get_tiled_wg_shape_mnl(problem_shape_mnkl, tile_shape);
     uint32_t k_tile_per_output_tile = cute::size(cute::ceil_div(cute::shape<2>(problem_shape_mnkl), cute::shape<2>(TileShape{})));
 
     return Params::get_workspace_size(
@@ -455,7 +455,7 @@ template <int ThreadsPerBlock, class FrgTensorC>
 
     TileShape tile_shape;
 
-    dim3 problem_blocks = get_tiled_cta_shape_mnl(problem_shape_mnkl, tile_shape);
+    dim3 problem_blocks = get_tiled_wg_shape_mnl(problem_shape_mnkl, tile_shape);
     uint32_t k_tile_per_output_tile = cute::size(cute::ceil_div(cute::shape<2>(problem_shape_mnkl), cute::shape<2>(TileShape{})));
 
     return Params::initialize_workspace(
@@ -674,7 +674,7 @@ CUTLASS_DEVICE
 
     params.divmod_batch_(work_idx_l, remainder, output_tile_id);
 
-    uint64_t cta_per_grid_dim = remainder; //params.divmod_cluster_shape_minor_.divide(remainder);
+    uint64_t cta_per_grid_dim = remainder;
 
     auto [work_idx_m, work_idx_n] = Params::get_work_idx_m_and_n(
                                           cta_per_grid_dim,
@@ -685,11 +685,6 @@ CUTLASS_DEVICE
     work_tile_info.M_idx = work_idx_m;
     work_tile_info.N_idx = work_idx_n;
     work_tile_info.L_idx = work_idx_l;
-
-    // if(ThreadIdxX() == 0)
-    //   printf("BlockID: %lu | k_tile_count: %d | M_idx: %lu | N_idx: %lu | K_idx: %lu | L_idx: %lu | ctas_per_grid_dim: %lu | output_tile_id: %lu\n",
-    //         BlockIdxX(), work_tile_info.k_tile_count, work_tile_info.M_idx, work_tile_info.N_idx, work_tile_info.K_idx,
-    //         work_tile_info.L_idx, remainder, output_tile_id);
   }
 
 };
