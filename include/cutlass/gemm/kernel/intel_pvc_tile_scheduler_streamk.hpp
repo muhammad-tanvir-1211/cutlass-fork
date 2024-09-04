@@ -529,15 +529,14 @@ CUTLASS_DEVICE
       auto sk_tiles_in_group = params.sk_tiles_;
       auto k_tiles_in_group = sk_tiles_in_group * params.divmod_tiles_per_output_tile_.divisor;
       auto k_tiles_per_unit_in_group = params.divmod_sk_units_per_group_.divide(k_tiles_in_group);
-      // auto big_units_in_group = params.div_cluster_size(
-      //   k_tiles_in_group - (k_tiles_per_unit_in_group * params.divmod_sk_units_per_group_.divisor));
+      auto big_units_in_group = k_tiles_in_group - (k_tiles_per_unit_in_group * params.divmod_sk_units_per_group_.divisor);
 
       uint64_t split;
       params.divmod_sk_units_per_group_(split, output_tile_id, output_tile_id);
 
       bool is_split_k = params.divmod_splits_.divisor > 1;
-      auto big_unit_cmp_lhs = output_tile_id;
-      auto big_unit_cmp_rhs = /*is_split_k ? */params.big_units_;// : big_units_in_group;
+      auto big_unit_cmp_lhs = is_split_k ? split : output_tile_id;
+      auto big_unit_cmp_rhs = is_split_k ? params.big_units_ : big_units_in_group;
       auto linear_idx_mult = is_split_k ? params.divmod_tiles_per_output_tile_.divisor : k_tiles_per_unit_in_group;
       auto k_tiles_per_split = is_split_k ? params.divmod_k_tiles_per_sk_unit_.divisor : k_tiles_per_unit_in_group;
 
@@ -548,18 +547,18 @@ CUTLASS_DEVICE
       // compute one extra iteration. If there are any big units, they will be the first
       // in the linearized ID space.
       auto k_tiles_in_my_split = k_tiles_per_split;
-      // if (big_unit_cmp_lhs < big_unit_cmp_rhs) {
-      //   // Since the "big units" are the first units in the linearized ID space, each
-      //   // of the units preceding this big unit computed one extra iteration. Thus,
-      //   // we must offset our start iteration by the number of units that precede
-      //   // the current unit in the linearized ID space.
-      //   unit_iter_start += big_unit_cmp_lhs;
-      //   ++k_tiles_in_my_split;
-      // }
-      // else {
-      //   // Increment by one for each of the big clusters (since all big units precede this unit)
-      //   unit_iter_start += big_unit_cmp_rhs;
-      // }
+      if (big_unit_cmp_lhs < big_unit_cmp_rhs) {
+        // Since the "big units" are the first units in the linearized ID space, each
+        // of the units preceding this big unit computed one extra iteration. Thus,
+        // we must offset our start iteration by the number of units that precede
+        // the current unit in the linearized ID space.
+        unit_iter_start += big_unit_cmp_lhs;
+        ++k_tiles_in_my_split;
+      }
+      else {
+        // Increment by one for each of the big clusters (since all big units precede this unit)
+        unit_iter_start += big_unit_cmp_rhs;
+      }
 
       if (!is_split_k) {
         // Adjust the unit starting position and number of tiles to avoid
