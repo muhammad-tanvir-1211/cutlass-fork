@@ -47,6 +47,7 @@
 #include "cutlass/util/reference/device/tensor_compare.h"
 #include "common.h"
 
+#include "cutlass/gemm/kernel/intel_pvc_persistent_tile_scheduler_params_streamk.hpp"
 using namespace cute;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -56,14 +57,16 @@ struct Options {
 
   bool help;
   bool error;
+  bool splitk;
 
-  int m, n, k, l, iterations;
+  int m, n, k, l, iterations, splits;
   float alpha, beta;
 
   Options():
     help(false),
     error(false),
-    m(5120), n(4096), k(4096), l(1), iterations(20),
+    splitk(false),
+    m(5120), n(4096), k(4096), l(1), iterations(20), splits(1),
     alpha(1.f), beta(0.f)
   { }
 
@@ -76,13 +79,19 @@ struct Options {
       return;
     }
 
+    if (cmd.check_cmd_line_flag("splitk")) {
+      splitk = true;
+    }
+
     cmd.get_cmd_line_argument("m", m, 5120);
     cmd.get_cmd_line_argument("n", n, 4096);
     cmd.get_cmd_line_argument("k", k, 4096);
     cmd.get_cmd_line_argument("l", l, 1);
+    cmd.get_cmd_line_argument("splits", splits, 16);
     cmd.get_cmd_line_argument("alpha", alpha, 1.f);
     cmd.get_cmd_line_argument("beta", beta, 0.f);
     cmd.get_cmd_line_argument("iterations", iterations, 100);
+    cmd.get_cmd_line_argument("splits", splits, 1);
   }
 
   /// Prints the usage statement.
@@ -91,10 +100,12 @@ struct Options {
     out << "PVC GEMM Example\n\n"
       << "Options:\n\n"
       << "  --help                      If specified, displays this usage statement\n\n"
+      << "  --splitk                 If specified, uses SplitK decomposition\n"
       << "  --m=<int>                   Sets the M extent of the GEMM\n"
       << "  --n=<int>                   Sets the N extent of the GEMM\n"
       << "  --k=<int>                   Sets the K extent of the GEMM\n"
       << "  --l=<int>                   Sets the L extent (batch count) of the GEMM\n"
+      << "  --splits=<int>              Sets the splitting factor for GEMM\n"
       << "  --alpha=<s32>               Epilogue scalar alpha\n"
       << "  --beta=<s32>                Epilogue scalar beta\n\n"
       << "  --iterations=<int>          Iterations\n\n";
@@ -219,7 +230,10 @@ struct ExampleRunner {
       problem_size,
       {block_A.get(), stride_A, block_B.get(), stride_B},
       {{options.alpha, options.beta}, block_C.get(), stride_C, block_D.get(), stride_D},
-      hw_info
+      hw_info,
+      {options.splits, 
+      options.splitk ? cutlass::gemm::kernel::detail::PersistentTileSchedulerIntelPVCStreamKParams::DecompositionMode::SplitK :
+                          cutlass::gemm::kernel::detail::PersistentTileSchedulerIntelPVCStreamKParams::DecompositionMode::StreamK}
     };
 
     Gemm gemm_op;
@@ -244,6 +258,7 @@ struct ExampleRunner {
       GPU_Clock timer;
       timer.start();
       for (int i = 0; i < options.iterations; ++i) {
+        Gemm::GemmKernel::initialize_workspace(arguments, workspace.get());
         gemm_op.run();
       }
       syclcompat::wait();
@@ -354,7 +369,8 @@ int main(int argc, const char** argv)
   using GemmKernel = cutlass::gemm::kernel::GemmUniversal<
   Shape<int, int, int, int>,
   CollectiveMainloop,
-  CollectiveEpilogue
+  CollectiveEpilogue,
+  cutlass::gemm::StreamKScheduler
   >;
 
   using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
