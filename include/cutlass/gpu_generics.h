@@ -317,7 +317,7 @@ using dim3 = syclcompat::dim3;
 template <typename T>
 CUTLASS_DEVICE T atomicAdd(T *address, T val) {
 #if defined(__SYCL_DEVICE_ONLY__)
-  return syclcompat::atomic_fetch_add(address, val);
+  return syclcompat::atomic_fetch_add<sycl::access::address_space::global_space>(address, val);
 #endif
   return 0;
 }

@@ -259,8 +259,6 @@ public:
     CollectiveMainloop collective_mma;
     CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
 
-    Tensor accumulators = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM>, Int<FragsN>>{});
-
     const int m_offset = sub_group_id / CollectiveMainloop::sg_per_wg_n * get<0>(subgroup_shape);
     const int n_offset = sub_group_id % CollectiveMainloop::sg_per_wg_n * get<1>(subgroup_shape);
 
@@ -290,7 +288,7 @@ public:
       auto n_max_coord = N - get<1>(subgroup_shape) * n_coord;                             // N - SUB_N * n_coord
       auto residue_mnk = make_tuple(m_max_coord, n_max_coord, k_residue);
 
-      clear(accumulators);
+      Tensor accumulators = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM>, Int<FragsN>>{});
 
       // Perform the collective scoped MMA
       collective_mma(
