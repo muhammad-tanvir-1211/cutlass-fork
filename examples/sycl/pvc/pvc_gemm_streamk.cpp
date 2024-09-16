@@ -47,7 +47,7 @@
 #include "cutlass/util/reference/device/tensor_compare.h"
 #include "common.h"
 
-#include "cutlass/gemm/kernel/intel_pvc_persistent_tile_scheduler_params_streamk.hpp"
+#include "cutlass/gemm/kernel/xe_persistent_tile_scheduler_params_streamk.hpp"
 using namespace cute;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -87,7 +87,6 @@ struct Options {
     cmd.get_cmd_line_argument("n", n, 4096);
     cmd.get_cmd_line_argument("k", k, 4096);
     cmd.get_cmd_line_argument("l", l, 1);
-    cmd.get_cmd_line_argument("splits", splits, 16);
     cmd.get_cmd_line_argument("alpha", alpha, 1.f);
     cmd.get_cmd_line_argument("beta", beta, 0.f);
     cmd.get_cmd_line_argument("iterations", iterations, 100);
@@ -232,8 +231,8 @@ struct ExampleRunner {
       {{options.alpha, options.beta}, block_C.get(), stride_C, block_D.get(), stride_D},
       hw_info,
       {options.splits, 
-      options.splitk ? cutlass::gemm::kernel::detail::PersistentTileSchedulerIntelPVCStreamKParams::DecompositionMode::SplitK :
-                          cutlass::gemm::kernel::detail::PersistentTileSchedulerIntelPVCStreamKParams::DecompositionMode::StreamK}
+      options.splitk ? cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::SplitK :
+                          cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::StreamK}
     };
 
     Gemm gemm_op;

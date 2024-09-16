@@ -48,8 +48,8 @@ namespace kernel {
 namespace detail {
 
 ////////////////////////////////////////////////////////////////////////////////
-// Parameters for Intel PVC persistent stream-K scheduler
-struct PersistentTileSchedulerIntelPVCStreamKParams {
+// Parameters for Xe persistent stream-K scheduler
+struct PersistentTileSchedulerXeStreamKParams {
 
   // Strategies for computing reductions between work-groups computing portions of a given output tile
   enum class ReductionMode {
@@ -88,7 +88,7 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
   FastDivmodU64 divmod_blk_major_{};
 
   // Divide up the number of stream-K tiles amongst G groups of stream-K units.
-  // Currently defaults to 1 since we don't create groups for PVC.
+  // Currently defaults to 1 since we don't create groups for Xe.
   FastDivmodU64 divmod_sk_groups_{};
 
   // Number of stream-K units in each group
@@ -464,7 +464,7 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
   static size_t
   get_barrier_workspace_size(uint64_t num_tiles, uint32_t barrier_bits) {
     size_t workspace_bits = num_tiles * static_cast<size_t>(barrier_bits);
-    return round_up_to_l2_alignment(bits_to_bytes<size_t>(workspace_bits));
+    return bits_to_bytes<size_t>(workspace_bits);
   }
 
   // Calculates the size of the workspace needed for holding partial outputs from splits
@@ -473,7 +473,7 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
   get_reduction_workspace_size(uint64_t num_tiles, GemmCoord tile_shape, uint32_t accumulator_bits, uint32_t num_accumulator_mtxs = 1) {
     size_t output_tile_size = tile_shape.m() * tile_shape.n();
     size_t workspace_bits = accumulator_bits * output_tile_size * num_tiles * num_accumulator_mtxs;
-    return round_up_to_l2_alignment(bits_to_bytes<size_t>(workspace_bits));
+    return bits_to_bytes<size_t>(workspace_bits);
   }
 
   static void
@@ -694,15 +694,6 @@ struct PersistentTileSchedulerIntelPVCStreamKParams {
     sk_tiles_ = 0;
     sk_units_ = 0;
     divmod_sk_units_per_group_ = FastDivmodU64(blocks_m * blocks_n * blocks_l);
-  }
-
-  private:
-  // Round up number of bytes to the nearest multiple of L2 cache line alignment
-  CUTLASS_HOST_DEVICE
-  static size_t
-  round_up_to_l2_alignment(size_t bytes) {
-    constexpr size_t L2CacheLineSizeBytes = 128u;
-    return (bytes + L2CacheLineSizeBytes - 1) / L2CacheLineSizeBytes * L2CacheLineSizeBytes;
   }
 };
 

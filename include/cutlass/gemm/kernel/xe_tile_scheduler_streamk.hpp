@@ -38,7 +38,7 @@
 #include "cutlass/kernel_hardware_info.hpp"
 #include "cute/layout.hpp"
 #include "cute/tensor.hpp"
-#include "cutlass/gemm/kernel/intel_pvc_persistent_tile_scheduler_params_streamk.hpp"
+#include "cutlass/gemm/kernel/xe_persistent_tile_scheduler_params_streamk.hpp"
 
 namespace cutlass::gemm::kernel::detail {
 
@@ -46,7 +46,7 @@ namespace cutlass::gemm::kernel::detail {
 template <
   class TileShape
 >
-class PersistentTileSchedulerIntelPVCStreamK {
+class PersistentTileSchedulerXeStreamK {
   //
   // Data members
   //
@@ -59,7 +59,7 @@ public:
   // Use a dummy barrier manager to simply get the type used to store the barrier
   using BarrierType = typename NamedBarrierManager<1>::T;
 
-  using Params = PersistentTileSchedulerIntelPVCStreamKParams;
+  using Params = PersistentTileSchedulerXeStreamKParams;
   using ReductionMode = Params::ReductionMode;
   using DecompositionMode = Params::DecompositionMode;
 
@@ -180,10 +180,10 @@ public:
   }
 
   CUTLASS_HOST_DEVICE
-  PersistentTileSchedulerIntelPVCStreamK() { };
+  PersistentTileSchedulerXeStreamK() { };
 
   CUTLASS_HOST_DEVICE
-  PersistentTileSchedulerIntelPVCStreamK(Params const& params_) : scheduler_params(params_) {
+  PersistentTileSchedulerXeStreamK(Params const& params_) : scheduler_params(params_) {
     current_work_linear_idx_ = uint64_t(BlockIdxX());
   }
 
@@ -324,7 +324,7 @@ template <int ThreadsPerBlock, class FrgTensorC>
     int barrier_group_thread_idx = ThreadIdxX();
 
     // Reductions use BlockStripedReduce with a width of BarrierManager::ThreadCount under the hood.
-    // Thus, the start of the reduction space is the same across all threads in a warp group.
+    // Thus, the start of the reduction space is the same across all threads in a work group.
     int reduction_offset =
       (cute::size<0>(TileShape{}) * cute::size<1>(TileShape{}) * reduction_tile_idx * num_accumulator_mtxs) +
       reduction_peer_offset;
