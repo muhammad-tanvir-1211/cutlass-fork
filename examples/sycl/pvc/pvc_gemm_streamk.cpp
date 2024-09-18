@@ -52,6 +52,8 @@ using namespace cute;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
+#define CUTLASS_SYCL_PROFILING_ENABLED
+
 // Command line options parsing
 struct Options {
 
@@ -142,6 +144,8 @@ struct ExampleRunner {
 
   using ProblemShapeType = typename Gemm::GemmKernel::ProblemShape;
 
+  int32_t count;
+
   //
   // Data members
   //
@@ -153,9 +157,9 @@ struct ExampleRunner {
   StrideD stride_D;
   uint64_t seed = 0;
 
-  cutlass::DeviceAllocation<ElementA> block_A;
-  cutlass::DeviceAllocation<ElementB> block_B;
-  cutlass::DeviceAllocation<ElementC> block_C;
+  std::vector<cutlass::DeviceAllocation<ElementA>> block_A;
+  std::vector<cutlass::DeviceAllocation<ElementB>> block_B;
+  std::vector<cutlass::DeviceAllocation<ElementC>> block_C;
   cutlass::DeviceAllocation<ElementOutput> block_D;
   cutlass::DeviceAllocation<ElementOutput> block_ref_D;
 
@@ -166,9 +170,9 @@ struct ExampleRunner {
   bool verify(const ProblemShapeType& problem_size, ElementCompute alpha, ElementCompute beta) {
     auto [M, N, K, L] = problem_size;
 
-    cutlass::TensorRef ref_A(block_A.get(), LayoutA::packed({M, K}));
-    cutlass::TensorRef ref_B(block_B.get(), LayoutB::packed({K, N}));
-    cutlass::TensorRef ref_C(block_C.get(), LayoutC::packed({M, N}));
+    cutlass::TensorRef ref_A(block_A[0].get(), LayoutA::packed({M, K}));
+    cutlass::TensorRef ref_B(block_B[0].get(), LayoutB::packed({K, N}));
+    cutlass::TensorRef ref_C(block_C[0].get(), LayoutC::packed({M, N}));
     cutlass::TensorRef ref_D(block_ref_D.get(), LayoutD::packed({M, N}));
 
     cutlass::reference::device::GemmComplex(
@@ -208,15 +212,27 @@ struct ExampleRunner {
     stride_C = cutlass::make_cute_packed_stride(StrideC{}, cute::make_shape(M, N, L));
     stride_D = cutlass::make_cute_packed_stride(StrideD{}, cute::make_shape(M, N, L));
 
-    block_A.reset(M * K * L);
-    block_B.reset(K * N * L);
-    block_C.reset(M * N * L);
+    std::size_t mem_occupied_ABC = (M * K * L * sizeof(ElementA)) + (K * N * L * sizeof(ElementB)) + 
+                                   (M * N * L * sizeof(ElementC));
+    count = std::ceil(static_cast<float>(get_llc_size()) / static_cast<float>(mem_occupied_ABC));
+
+    for(int i = 0; i < count; i++) {
+      block_A.emplace_back();
+      block_B.emplace_back();
+      block_C.emplace_back();
+    }
+
+    for (int i = 0; i < count; i++) {
+      block_A[i].reset(M * K * L);
+      block_B[i].reset(K * N * L);
+      block_C[i].reset(M * N * L);
+      initialize_block(block_A[i], seed + i);
+      initialize_block(block_B[i], seed + i);
+      initialize_block(block_C[i], seed + i);
+    }
+
     block_D.reset(M * N * L);
     block_ref_D.reset(M * N * L);
-
-    initialize_block(block_A, seed + 2023);
-    initialize_block(block_B, seed + 2022);
-    initialize_block(block_C, seed + 2021);
   }
 
   void run(const Options& options, const cutlass::KernelHardwareInfo& hw_info) {
@@ -227,8 +243,8 @@ struct ExampleRunner {
     typename Gemm::GemmKernel::Arguments arguments{
       cutlass::gemm::GemmUniversalMode::kGemm,
       problem_size,
-      {block_A.get(), stride_A, block_B.get(), stride_B},
-      {{options.alpha, options.beta}, block_C.get(), stride_C, block_D.get(), stride_D},
+      {block_A[0].get(), stride_A, block_B[0].get(), stride_B},
+      {{options.alpha, options.beta}, block_C[0].get(), stride_C, block_D.get(), stride_D},
       hw_info,
       {options.splits, 
       options.splitk ? cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::SplitK :
@@ -255,14 +271,27 @@ struct ExampleRunner {
 
     if (passed && options.iterations > 0) {
       GPU_Clock timer;
-      timer.start();
+      float elapsed_time_seconds = 0.f;
       for (int i = 0; i < options.iterations; ++i) {
-        Gemm::GemmKernel::initialize_workspace(arguments, workspace.get());
+        int32_t idx = std::max(int(0), (i % count) - 1);
+        typename Gemm::GemmKernel::Arguments arguments{
+          cutlass::gemm::GemmUniversalMode::kGemm,
+          problem_size,
+          {block_A[idx].get(), stride_A, block_B[idx].get(), stride_B},
+          {{options.alpha, options.beta}, block_C[idx].get(), stride_C, block_D.get(), stride_D},
+          hw_info,
+          {options.splits, 
+          options.splitk ? cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::SplitK :
+                              cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::StreamK}
+        };
+        gemm_op.initialize(arguments, workspace.get());
+        timer.start();
         gemm_op.run();
+        syclcompat::wait();
+        elapsed_time_seconds += timer.seconds();
       }
-      syclcompat::wait();
 
-      float cute_time = timer.seconds() / options.iterations;
+      float cute_time = elapsed_time_seconds / options.iterations;
       double tflops = (2.0 * options.m * options.n * options.k * options.l) * 1e-12;
       std::cout << "Problem Size: " << options.m << 'x' << options.n << 'x' << options.k << 'x' << options.l << std::endl;
       printf("Cutlass GEMM Performance:     [%4.3f]TFlop/s  (%6.4f)ms\n", tflops / cute_time, cute_time*1000);
