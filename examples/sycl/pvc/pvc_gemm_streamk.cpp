@@ -60,6 +60,7 @@ struct Options {
   bool help;
   bool error;
   bool splitk;
+  bool dp;
 
   int m, n, k, l, iterations, splits;
   float alpha, beta;
@@ -68,6 +69,7 @@ struct Options {
     help(false),
     error(false),
     splitk(false),
+    dp(false),
     m(5120), n(4096), k(4096), l(1), iterations(20), splits(1),
     alpha(1.f), beta(0.f)
   { }
@@ -83,6 +85,10 @@ struct Options {
 
     if (cmd.check_cmd_line_flag("splitk")) {
       splitk = true;
+    }
+
+    if (cmd.check_cmd_line_flag("dp")) {
+      dp = true;
     }
 
     cmd.get_cmd_line_argument("m", m, 5120);
@@ -101,7 +107,8 @@ struct Options {
     out << "PVC GEMM Example\n\n"
       << "Options:\n\n"
       << "  --help                      If specified, displays this usage statement\n\n"
-      << "  --splitk                 If specified, uses SplitK decomposition\n"
+      << "  --dp                        If specified, uses Data Parallel decomposition\n"
+      << "  --splitk                    If specified, uses SplitK decomposition\n"
       << "  --m=<int>                   Sets the M extent of the GEMM\n"
       << "  --n=<int>                   Sets the N extent of the GEMM\n"
       << "  --k=<int>                   Sets the K extent of the GEMM\n"
@@ -247,6 +254,7 @@ struct ExampleRunner {
       {{options.alpha, options.beta}, block_C[0].get(), stride_C, block_D.get(), stride_D},
       hw_info,
       {options.splits, 
+      options.dp ? cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::DataParallel :
       options.splitk ? cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::SplitK :
                           cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::StreamK}
     };
@@ -281,6 +289,7 @@ struct ExampleRunner {
           {{options.alpha, options.beta}, block_C[idx].get(), stride_C, block_D.get(), stride_D},
           hw_info,
           {options.splits, 
+          options.dp ? cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::DataParallel :
           options.splitk ? cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::SplitK :
                               cutlass::gemm::kernel::detail::PersistentTileSchedulerXeStreamKParams::DecompositionMode::StreamK}
         };
