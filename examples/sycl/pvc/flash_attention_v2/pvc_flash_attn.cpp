@@ -303,7 +303,7 @@ struct ExampleRunner {
         for (int row = 0; row < seq_len; row++) {
           int idx = row * seq_len;
           for (int col = 0; col < seq_len; col++, idx++) {
-            host_S[idx] = std::exp(host_S[idx] - max_vec[row]);
+            host_S[idx] = std::exp(host_S[idx] - max_vec[row]) / sqrt(static_cast<ElementOutput>((seq_len)));
           }
         }
 
