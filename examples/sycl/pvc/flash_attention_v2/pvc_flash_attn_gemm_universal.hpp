@@ -123,6 +123,8 @@ public:
 
   static constexpr int VecC = CollectiveMainloop::VecC;
 
+  static constexpr auto sg_per_wg_n = CollectiveMainloop::sg_per_wg_n;
+
   // Kernel level shared memory storage
   struct SharedStorage {
     using EpilogueTensorStorage = typename CollectiveEpilogue::TensorStorage;
@@ -192,15 +194,15 @@ public:
   static dim3
   get_grid_shape(Params const& params) {
     return dim3(
+            cute::size(cute::ceil_div(cute::shape<3>(params.problem_shape), cute::shape<1>(WorkgroupTileShape{}))),
             cute::size(cute::ceil_div(cute::shape<2>(params.problem_shape), cute::shape<0>(WorkgroupTileShape{}))),
-            cute::size(cute::shape<1>(params.problem_shape)),
-            cute::size(cute::shape<0>(params.problem_shape))
+            cute::size(cute::shape<0>(params.problem_shape) * cute::shape<1>(params.problem_shape))
     );
   }
 
   static dim3
   get_block_shape() {
-    return dim3(cute::shape<0>(WorkgroupTileShape{}) / cute::shape<0>(SubgroupTileShape{}) * SubgroupSize, 1, 1);
+    return dim3(MaxThreadsPerBlock, 1, 1);
   }
 
   CUTLASS_DEVICE
@@ -222,12 +224,15 @@ public:
     static_assert(cute::rank(StrideV{}) == 4, "StrideK must be rank-4: [batch, num_heads, seq_len, head_size].");
 
     int thread_idx = int(ThreadIdxX());
-    int sub_group_id = syclcompat::global_id::x() / SubgroupSize;
+    int sub_group_id = thread_idx / SubgroupSize;
     constexpr auto workgroup_shape = WorkgroupTileShape{};                                                  // (SUB_M,SUB_N,SUB_K)
     constexpr auto subgroup_shape = SubgroupTileShape{};                                                  // (SUB_M,SUB_N,SUB_K)
 
-    const int seq_coord = sub_group_id * get<0>(subgroup_shape);
-    const auto tile_coord = make_coord(static_cast<int>(BlockIdxZ()), static_cast<int>(BlockIdxY()), seq_coord, _);
+    const int seq_coord = BlockIdxY() * get<0>(workgroup_shape) + (sub_group_id / sg_per_wg_n) * get<0>(subgroup_shape);
+    const int head_size_coord = BlockIdxX() * get<1>(workgroup_shape) + (sub_group_id % sg_per_wg_n) * get<1>(subgroup_shape);
+    const int num_heads_coord = static_cast<int>(BlockIdxZ()) % num_heads;
+    const int batch_coord = static_cast<int>(BlockIdxZ()) / num_heads;
+    const auto tile_coord = make_coord(batch_coord, num_heads_coord, seq_coord, head_size_coord);
 
     Tensor tQi = params.mainloop.gmem_tiled_copy_q.get_pvc_flash_tensor(
                                                   make_coord(0, 0, seq_coord, 0),
@@ -261,7 +266,7 @@ public:
     CollectiveMainloop collective_mma;
 
     // 0) Copy Q
-    auto new_tQi = tQi(_, static_cast<int>(BlockIdxZ()), static_cast<int>(BlockIdxY()), _, _);
+    auto new_tQi = tQi(_, batch_coord, num_heads_coord, _, _);
 
     const int causal_seq_len = seq_coord + get<0>(subgroup_shape);
     const int non_causal_seq_len = seq_len;
@@ -281,7 +286,7 @@ public:
                                                     make_coord(0, 0, load_idx, 0),
                                                     make_shape(batch, num_heads, Int<FragsN / version>{}, head_size),
                                                     make_stride(Int<version * get<1>(MmaAtomShape())>{}, _1{}));
-      auto new_tKi = tKi(_, static_cast<int>(BlockIdxZ()), static_cast<int>(BlockIdxY()), _, _);
+      auto new_tKi = tKi(_, batch_coord, num_heads_coord, _, _);
       Tensor tSr = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM>, Int<FragsN>>{});
       clear(tSr);
       // 3) Perform GEMM S = Q*K
@@ -319,7 +324,7 @@ public:
                                                     make_coord(0, 0, load_idx, 0),
                                                     make_shape(batch, num_heads, Int<FragsN / version>{}, head_size),
                                                     make_stride(Int<version * get<1>(MmaAtomShape())>{}, _1{}));
-      auto new_tVi = tVi(_, static_cast<int>(BlockIdxZ()), static_cast<int>(BlockIdxY()), _, _);
+      auto new_tVi = tVi(_, batch_coord, num_heads_coord, _, _);
       collective_mma.mmaPV(out_reg, tPr, new_tVi, out_reg, get<1>(subgroup_shape), params.mainloop);
     }
 

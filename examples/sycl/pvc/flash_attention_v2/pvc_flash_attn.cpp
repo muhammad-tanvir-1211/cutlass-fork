@@ -174,7 +174,7 @@ struct Options {
       << "  --batch=<int>               Sets the Batch Size of the Multi-Head Self Attention module\n"
       << "  --num_heads=<int>           Sets the Number of Attention Heads of the Multi-Head Self Attention module\n"
       << "  --seq_len=<int>             Sets the Sequence length of the Multi-Head Self Attention module\n"
-      << "  --head_size=<int>            Sets the Attention Head dimension of the Multi-Head Self Attention module\n"
+      << "  --head_size=<int>           Sets the Attention Head dimension of the Multi-Head Self Attention module\n"
       << "  --iterations=<int>          Iterations\n\n";
 
     return out;
@@ -427,7 +427,7 @@ int main(int argc, const char** argv)
   using GmemTiledCopyV = XE_2D_U16x16x16x2x2_V;
 
   // Workgroup-level tile
-  using TileShape = Shape<_256, _256, _32>;
+  using TileShape = Shape<_256, _64, _32>;
 
   using TiledMma = TiledMMA<MMA_Atom<XE_8x16x16_F32BF16BF16F32_TT>,
           Layout<Shape<_1,_1,_1>>,

@@ -241,19 +241,17 @@ public:
 
     // Indexing variables
     auto [batch, num_heads, seq_len, head_size] = problem_shape;
-    auto [batch_coord, num_head_coord, seq_coord, head_size_coord] = tile_coord;
+    auto [batch_coord, num_heads_coord, seq_coord, head_size_coord] = tile_coord;
 
     Tensor tOuti = params.xe_store_o.get_pvc_flash_tensor(
-            make_coord(0, 0, seq_coord, 0),
+            make_coord(0, 0, seq_coord, head_size_coord),
             make_shape(batch, num_heads, Int<FragsM>{}, Int<FragsN>{}),
             make_stride(Int<get<0>(MmaAtomShape{})>{}, Int<get<1>(MmaAtomShape{})>{}));
-    auto tOi = tOuti(_, batch_coord, num_head_coord, _, _);
+    auto tOi = tOuti(_, batch_coord, num_heads_coord, _, _);
 
     copy(params.xe_store_o, out, tOi);
 
-    const int lse_offset = seq_coord + 
-                          (static_cast<int>(BlockIdxY()) + 
-                                static_cast<int>(BlockIdxZ()) * num_heads) * seq_len;
+    const int lse_offset = seq_coord + (num_heads_coord + batch_coord * num_heads) * seq_len;
 
     auto lse_ptr = params.ptr_LSE + lse_offset;
 
