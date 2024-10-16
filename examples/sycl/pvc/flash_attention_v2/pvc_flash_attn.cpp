@@ -236,7 +236,7 @@ struct ExampleRunner {
   // Methods
   //
 
-  bool verify(const ProblemShapeType& problem_size) {
+  bool verify(const ProblemShapeType& problem_size, bool is_causal) {
     auto [batch, num_heads, seq_len, head_size] = problem_size;
 
     int mat_size = seq_len * head_size;
@@ -255,7 +255,6 @@ struct ExampleRunner {
         cutlass::TensorRef ref_V(block_V.get() + offset, LayoutV::packed({seq_len, head_size}));
         cutlass::TensorRef ref_S(block_S.get(), LayoutQ::packed({seq_len, seq_len}));
         cutlass::TensorRef ref_O(block_ref_O.get() + offset, LayoutO::packed({seq_len, head_size}));
-        // cutlass::TensorRef ref_LSE(block_ref_O.get(), LayoutD::packed({seq_len, head_size}));
 
         cutlass::reference::device::GemmComplex(
               {seq_len, seq_len, head_size},
@@ -280,11 +279,13 @@ struct ExampleRunner {
         std::vector<ElementOutput> host_S(seq_len * seq_len);
         syclcompat::memcpy<ElementOutput>(host_S.data(), block_S.get(), host_S.size());
 
-        // apply mask to S
-        for (int row = 0; row < seq_len; row++) {
-          for (int col = 0; col < seq_len; col++) {
-            if (col > row)
-              host_S[col + row * seq_len] = -INFINITY;
+        if(is_causal) {
+          // apply mask to S
+          for (int row = 0; row < seq_len; row++) {
+            for (int col = 0; col < seq_len; col++) {
+              if (col > row)
+                host_S[col + row * seq_len] = -INFINITY;
+            }
           }
         }
 
@@ -444,7 +445,7 @@ struct ExampleRunner {
     syclcompat::wait();
 
     // Verify that the result is correct
-    bool passed = verify(problem_size);
+    bool passed = verify(problem_size, options.is_causal);
     std::cout << "Disposition: " << (passed ? "Passed" : "Failed") << std::endl;
 
     if (passed && options.iterations > 0) {
