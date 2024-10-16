@@ -293,12 +293,21 @@ public:
       collective_mma.mmaQK(tSr, new_tQi, new_tKi, tSr, head_size, params.mainloop);
       // 4) Call Mask::operator()()
       // Apply causal mask
-      if(params.mask.is_causal && nblock * get<1>(subgroup_shape) >= seq_coord) {
+      if(params.mask.is_causal && load_idx >= seq_coord) {
         // mask the elements of each tile where j > i
         // need more information about the copy fragments
-        CUTLASS_PRAGMA_UNROLL
-        for(int idx = 0; idx < item_id; idx++) {
-          fill(tSr(idx, _, _), -INFINITY);
+        CUTLASS_PRAGMA_NO_UNROLL
+        for(int n = 0; n < FragsN; n++) {
+          int col_idx = item_id + n * get<1>(MmaAtomShape()) + load_idx;
+          CUTLASS_PRAGMA_NO_UNROLL
+          for(int m = 0; m < FragsM; m++) {
+            int row_idx = m * get<0>(MmaAtomShape()) + seq_coord;
+            CUTLASS_PRAGMA_NO_UNROLL
+            for(int row = 0; row < VecC; row++, row_idx++) {
+              if(col_idx > row_idx)
+                tSr(row, m, n) = -INFINITY;
+            }
+          }
         }
       }
 
