@@ -221,7 +221,7 @@ public:
     // Preconditions
     static_assert(cute::rank(StrideQ{}) == 4, "StrideQ must be rank-4: [batch, num_heads, seq_len, head_size].");
     static_assert(cute::rank(StrideK{}) == 4, "StrideK must be rank-4: [batch, num_heads, seq_len, head_size].");
-    static_assert(cute::rank(StrideV{}) == 4, "StrideK must be rank-4: [batch, num_heads, seq_len, head_size].");
+    static_assert(cute::rank(StrideV{}) == 4, "StrideV must be rank-4: [batch, num_heads, seq_len, head_size].");
 
     int thread_idx = int(ThreadIdxX());
     int sub_group_id = thread_idx / SubgroupSize;

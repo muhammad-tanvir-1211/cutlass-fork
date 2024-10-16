@@ -85,7 +85,7 @@ CUTE_HOST_DEVICE constexpr
 auto get_coordinates(cute::Stride<IntT, IntT, IntT, Int<1>>,
                      Tensor<ViewEngine<ArithmeticTupleIterator<TS>>, SLayout> const &src) {
   auto [x, y, z, w] = src.data().coord_;
-  return make_coord(w, z, y, x);
+  return make_coord(z, w, y, x);
 }
 
 template <class IntT, class TS, class SLayout>
@@ -93,7 +93,7 @@ CUTE_HOST_DEVICE constexpr
 auto get_coordinates(cute::Stride<IntT, IntT, Int<1>, IntT>,
                      Tensor<ViewEngine<ArithmeticTupleIterator<TS>>, SLayout> const &src) {
   auto [x, y, z, w] = src.data().coord_;
-  return make_coord(z, w, y, x);
+  return make_coord(w, z, y, x);
 }
 
 /////////////////////////////////////Flash Attention End////////////////////////////////////////////////////

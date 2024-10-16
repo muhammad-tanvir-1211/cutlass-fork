@@ -291,8 +291,7 @@ struct ExampleRunner {
 
         // compute max element per row of S
         std::vector<ElementOutput> max_vec(seq_len);
-        for (int row = 0; row < seq_len; row++) {
-          int idx = row * seq_len;
+        for (int row = 0, idx = 0; row < seq_len; row++) {
           max_vec[row] = host_S[idx];
           for (int col = 0; col < seq_len; col++, idx++) {
             if (max_vec[row] < host_S[idx])
@@ -301,8 +300,7 @@ struct ExampleRunner {
         }
 
         // compute exp of S
-        for (int row = 0; row < seq_len; row++) {
-          int idx = row * seq_len;
+        for (int row = 0, idx = 0; row < seq_len; row++) {
           for (int col = 0; col < seq_len; col++, idx++) {
             host_S[idx] = std::exp(host_S[idx] - max_vec[row]) / sqrt(static_cast<ElementOutput>((seq_len)));
           }

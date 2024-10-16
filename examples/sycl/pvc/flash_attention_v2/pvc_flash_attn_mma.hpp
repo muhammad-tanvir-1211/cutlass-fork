@@ -213,8 +213,10 @@ struct CollectiveMmaAttention<
 
     constexpr int version = is_same_v<GmemTiledCopyK, XE_2D_U16x16x16x2x1_V> ? 1 : 2;
 
-    Tensor tQr = make_tensor<typename TiledMma::ValTypeA>(Shape<Int<get<0>(SubgroupTileShape{}) * FragsK>, Int<1>>{});
-    Tensor tKr = make_tensor<typename TiledMma::ValTypeB>(Shape<Int<get<2>(SubgroupTileShape{}) * version>, Int<FragsN / version>>{});
+    Tensor tQr = make_tensor<typename TiledMma::ValTypeA>(Shape<Int<get<0>(SubgroupTileShape{}) * FragsK>, 
+                                                                Int<1>>{});
+    Tensor tKr = make_tensor<typename TiledMma::ValTypeB>(Shape<Int<get<2>(SubgroupTileShape{}) * version>, 
+                                                                Int<FragsN / version>>{});
 
     Tensor tQr_view = make_tensor(static_cast<decltype(tQr) &&>(tQr).data(),
                             Shape<Int<VecA>, Int<FragsM>, Int<FragsK>>{});
@@ -230,7 +232,7 @@ struct CollectiveMmaAttention<
     // }
 
     CUTLASS_PRAGMA_UNROLL
-    for (int head_tile = 0; head_tile < head_size; head_tile += get<2>(SubgroupTileShape{}), prefetch_idx += get<2>(SubgroupTileShape{})) {
+    for (int head_tile = 0; head_tile < head_size; head_tile += get<2>(SubgroupTileShape{})) {
       load(params.gmem_tiled_copy_q, gQ(_, _, head_tile), tQr);
       load(params.gmem_tiled_copy_k, gK(_, _, head_tile), tKr);
 
@@ -238,6 +240,8 @@ struct CollectiveMmaAttention<
 
       // prefetch(params.gmem_tiled_copy_q, gQ(_, _, prefetch_idx));
       // prefetch(params.gmem_tiled_copy_k, gK(_, _, prefetch_idx));
+
+      prefetch_idx += get<2>(SubgroupTileShape{});
     }
   }
 
@@ -276,16 +280,12 @@ struct CollectiveMmaAttention<
     Tensor tPr_view = make_tensor<typename TiledMma::ValTypeA>(Shape<Int<VecA>, Int<FragsM>, Int<FragsK>>{});
 
     CUTLASS_PRAGMA_UNROLL
-    for (int idx = 0, z2 = 0; idx < reduce_dim; z2 += FragsK) {
+    for (int idx = 0, z = 0; idx < reduce_dim; z += size(tPr_view)) {
       load(params.gmem_tiled_copy_v, gV(_, _, idx), tVr);
 
       // initialize the P view
-      for(int x = 0; x < VecC; x++) {
-        for (int y = 0; y < FragsM; y++) {
-          for (int z = 0; z < FragsK; z++) {
-            tPr_view(x, y, z) = tPr(x, y, z2);
-          }
-        }
+      for(int i = 0; i < size(tPr_view); i++) {
+        tPr_view(i) = tPr(i + z);
       }
 
       cute::gemm(tiled_mma, accum, tPr_view, tVr_view, frag_src);
