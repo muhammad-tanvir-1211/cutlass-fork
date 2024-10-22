@@ -73,8 +73,9 @@ __global__ void
 
     if (a != b) {
       *equal = 0;
+      printf("idx: %lu | a: %f | b: %f\n", idx, a, b);
 
-      return;
+      // return;
     }
   }
 }
@@ -102,7 +103,9 @@ __global__ void
 
     if (!relatively_equal(a, b, epsilon, nonzero_floor)) {
       *equal = 0;
-      return;
+      printf("idx: %lu | a: %f | b: %f\n", idx, a, b);
+
+      // return;
     }
   }
 }

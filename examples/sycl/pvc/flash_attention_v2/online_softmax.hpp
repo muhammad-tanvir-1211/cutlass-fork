@@ -49,7 +49,7 @@ struct Softmax {
 
     static constexpr Params
     to_underlying_arguments(Arguments const& args) {
-        Arguments x{static_cast<Element>(args.scale * M_LOG2E)};
+        Arguments x{static_cast<Element>(args.scale)};
         return x;
     }
 
@@ -78,10 +78,10 @@ struct Softmax {
         for(int x = 0; x < SizeA; x++) {
             CUTLASS_PRAGMA_UNROLL
             for(int y = 0; y < SizeB; y++) {
-                Element max_scale = max(x, y) == -INFINITY ? Element{0} : max(x, y) * scale;
+                Element max_scale = max(x, y) == -INFINITY ? Element{0} : max(x, y);
                 CUTLASS_PRAGMA_UNROLL
                 for(int z = 0; z < SizeC; z++) {
-                    acc(x, y, z) = expf(acc(x, y, z) * scale - max_scale);
+                    acc(x, y, z) = expf((acc(x, y, z) - max_scale) * scale);
                 }
             }
         }
@@ -161,10 +161,10 @@ struct Softmax {
     class FragOut
     > 
     CUTLASS_DEVICE static typename std::enable_if<is_first>::type
-    run(FragAcc &frag, FragMax& max, FragSum& sum, FragOut&, Params const &params) {
-        reduce_max<true, SizeA, SizeB, SizeC>(frag, max);
-        scale_exp_log2<SizeA, SizeB, SizeC>(frag, max, params.scale);
-        reduce_sum<true, SizeA, SizeB, SizeC>(frag, sum);
+    run(FragAcc &frag_s, FragMax& max, FragSum& sum, FragOut&, Params const &params) {
+        reduce_max<is_first, SizeA, SizeB, SizeC>(frag_s, max);
+        scale_exp_log2<SizeA, SizeB, SizeC>(frag_s, max, params.scale);
+        reduce_sum<is_first, SizeA, SizeB, SizeC>(frag_s, sum);
     }
 
     template <
@@ -178,28 +178,28 @@ struct Softmax {
     class FragOut
     > 
     CUTLASS_DEVICE static typename std::enable_if<!is_first>::type
-    run(FragAcc &frag, FragMax& max, FragSum& sum, FragOut &out, Params const &params) {
+    run(FragAcc &frag_s, FragMax& max, FragSum& sum, FragOut &out, Params const &params) {
         cute::Tensor max_prev = cute::make_fragment_like(max);
         cute::copy(max, max_prev);
-        reduce_max<false, SizeA, SizeB, SizeC>(frag, max);
+        reduce_max<is_first, SizeA, SizeB, SizeC>(frag_s, max);
 
         CUTLASS_PRAGMA_UNROLL
         for(int x = 0; x < SizeA; x++) {
             CUTLASS_PRAGMA_UNROLL
             for(int y = 0; y < SizeB; y++) {
-                Element curr_scale = expf(max_prev(x, y) - max(x, y)) * params.scale;
+                Element curr_scale = expf((max_prev(x, y) - max(x, y)) * params.scale);
                 sum(x, y) *= curr_scale;
                 CUTLASS_PRAGMA_UNROLL
                 for(int z = 0; z < SizeC; z++) {
-                    out(x, y, z) *= curr_scale;
+                    out(x, y, z) /= curr_scale;
                 }
             }
         }
 
-        scale_exp_log2<SizeA, SizeB, SizeC>(frag, max, params.scale);
+        scale_exp_log2<SizeA, SizeB, SizeC>(frag_s, max, params.scale);
         cute::Tensor sum_prev = cute::make_fragment_like(sum);
         cute::copy(sum, sum_prev);
-        reduce_sum<false, SizeA, SizeB, SizeC>(frag, sum);
+        reduce_sum<is_first, SizeA, SizeB, SizeC>(frag_s, sum);
 
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < cute::size(sum); i++) {

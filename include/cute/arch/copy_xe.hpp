@@ -112,8 +112,39 @@ SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u16_m16k16v2(
 SYCL_DEVICE_BUILTIN(void __builtin_IB_subgroup_block_read_prefetch_u16_m32k16v2(
     long baseoffset, int width_minus_one, int height_minus_one,
     int pitch_minus_one, intel::coord_t coord, enum CacheControl cache_control));
-
 #undef SYCL_DEVICE_BUILTIN
+
+
+struct XE_2D_U16x32x32_LD_V {
+  template <class T>
+  CUTE_HOST_DEVICE static void copy(const void *baseoffset, int width,
+                                    int height, int pitch, intel::coord_t coord,
+                                    T *dst) {
+#if defined(SYCL_INTEL_TARGET)
+    static_assert(sizeof(T) == 2, "Expected T to have size 2");
+    *reinterpret_cast<intel::uint32 *>(dst) =
+        __builtin_IB_subgroup_block_read_flat_transform_u16_k32v2(
+            (long)(baseoffset), width - 1, height - 1, pitch - 1, coord);
+#else
+    CUTE_INVALID_CONTROL_PATH("Trying to use block loads on non-PVC hardware");
+#endif
+  }
+
+  struct PREFETCH {
+    CUTE_HOST_DEVICE static void copy(const void *baseoffset, int width,
+                                      int height, int pitch,
+                                      intel::coord_t coord) {
+#if defined(SYCL_INTEL_TARGET)
+      __builtin_IB_subgroup_block_read_prefetch_u16_m16k16v2(
+          (long)baseoffset, width - 1, height - 1, pitch - 1, coord,
+          CacheControl::kL1C_L3C);
+#else
+      CUTE_INVALID_CONTROL_PATH(
+          "Trying to use block prefetch on non-PVC hardware");
+#endif
+    }
+  };
+};
 
 /// @brief This function loads data from 2D memory surface.
 /// Loads an array of rectangular regions coord(X,Y)..coord(X+W,Y+H) from global memory into registers.

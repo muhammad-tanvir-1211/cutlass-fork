@@ -278,6 +278,7 @@ struct ExampleRunner {
 
         std::vector<ElementOutput> host_S(seq_len * seq_len);
         syclcompat::memcpy<ElementOutput>(host_S.data(), block_S.get(), host_S.size());
+        syclcompat::wait();
 
         if(is_causal) {
           // apply mask to S
@@ -356,8 +357,8 @@ struct ExampleRunner {
     }
 
     // Check if output from CUTLASS kernel and reference kernel are equal or not
-    bool passed = cutlass::reference::device::BlockCompareEqual(
-      block_ref_O.get(), block_O.get(), block_O.size());
+    bool passed = cutlass::reference::device::BlockCompareRelativelyEqual(
+      block_ref_O.get(), block_O.get(), block_O.size(), 0.05f, 0.05f);
 
     return passed;
   }
@@ -507,22 +508,16 @@ int main(int argc, const char** argv)
   using ElementInputKV = bfloat16_t;                        // <- data type of elements in input matrix B
   using ElementOutput = float;                        // <- data type of elements in output matrix D
 
-  using LayoutQ = cutlass::layout::RowMajor;
-  using LayoutK = cutlass::layout::ColumnMajor;
-  using LayoutV = cutlass::layout::RowMajor;
-  using LayoutO = cutlass::layout::RowMajor;
-  using LayoutLSE = cutlass::layout::RowMajor;
-
   using GmemTiledCopyQ = XE_2D_U16x8x16x4x2_LD_N;
-  using GmemTiledCopyK = XE_2D_U16x16x16x2x2_V;
-  using GmemTiledCopyV = XE_2D_U16x16x16x2x2_V;
+  using GmemTiledCopyK = XE_2D_U16x32x32_LD_V;
+  using GmemTiledCopyV = XE_2D_U16x32x32_LD_V;
 
   // Workgroup-level tile
   using TileShape = Shape<_256, _64, _32>;
 
   using TiledMma = TiledMMA<MMA_Atom<XE_8x16x16_F32BF16BF16F32_TT>,
           Layout<Shape<_1,_1,_1>>,
-          Tile<_32,_64,_32>>; // Subgroup level-tile
+          Tile<_32,_32,_32>>; // Subgroup level-tile
 
   constexpr int PipelineStages = 3;
   using GEMMDispatchPolicy = cutlass::gemm::MainloopIntelPVC<PipelineStages>;

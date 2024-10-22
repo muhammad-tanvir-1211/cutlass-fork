@@ -85,7 +85,7 @@ CUTE_HOST_DEVICE constexpr
 auto get_coordinates(cute::Stride<IntT, IntT, IntT, Int<1>>,
                      Tensor<ViewEngine<ArithmeticTupleIterator<TS>>, SLayout> const &src) {
   auto [x, y, z, w] = src.data().coord_;
-  return make_coord(z, w, y, x);
+  return make_coord(w, z, y, x);
 }
 
 template <class IntT, class TS, class SLayout>
@@ -93,7 +93,7 @@ CUTE_HOST_DEVICE constexpr
 auto get_coordinates(cute::Stride<IntT, IntT, Int<1>, IntT>,
                      Tensor<ViewEngine<ArithmeticTupleIterator<TS>>, SLayout> const &src) {
   auto [x, y, z, w] = src.data().coord_;
-  return make_coord(w, z, y, x);
+  return make_coord(z, w, y, x);
 }
 
 /////////////////////////////////////Flash Attention End////////////////////////////////////////////////////
@@ -113,6 +113,8 @@ struct XE_2D_LD_Unpack {
         int W = size<0>(shape_whd) * sizeof(typename Copy_Traits::CopyInternalType);
         int H = size<1>(shape_whd);
         auto [x, y, z, w] = get_coordinates(traits.tensor.stride(), src);
+        if(ThreadIdxX() == 0)
+           printf("Load H: %d | W: %d | x: %d | y: %d\n", H, W, x, y);
         CopyOp::copy(traits.tensor.data() + z + w, W, H, W, intel::coord_t{x, y},
                 &*dst.data());
     }
@@ -342,6 +344,25 @@ struct Copy_Traits<XE_2D_U16x8x16x4x2_LD_N, GTensor>
     using CopyInternalType = ushort;
 };
 
+
+template <class GTensor>
+struct Copy_Traits<XE_2D_U16x32x32_LD_V, GTensor>
+    : XE_2D_LD_Unpack<XE_2D_U16x32x32_LD_V, GTensor> {
+//   using Shape_MN = Shape<_32, _32>;
+  // Logical thread id to thread idx
+  using ThrID = Layout<_16>;
+  // Map from (src-thr,src-val) to bit
+  using SrcLayout = Layout<Shape <_16,_64>,
+                           Stride< _0, _1>>;
+  // Map from (dst-thr,dst-val) to bit
+  using DstLayout = Layout<Shape <_16,Shape <_16,  _2,  _2,  _16>>,
+                           Stride<_16,Stride< _1,_512,_256,_1024>>>;
+  // Reference map from (thr,val) to bit
+  using RefLayout = DstLayout;
+
+  using CopyInternalType = ushort;
+};
+
 template <class GTensor>
 struct Copy_Traits<XE_2D_U16x8x16x2x2_LD_N, GTensor>
     : XE_2D_LD_Unpack<XE_2D_U16x8x16x2x2_LD_N, GTensor> {
@@ -477,6 +498,8 @@ struct XE_2D_ST_Unpack {
         int H = size<1>(shape_whd);
         int W = size<0>(shape_whd) * sizeof(typename Copy_Traits::CopyInternalType);
         auto [x, y, z, w] = get_coordinates(traits.tensor.stride(), dst);
+        if(ThreadIdxX() == 0)
+           printf("Store H: %d | W: %d | x: %d | y: %d\n", H, W, x, y);
         CopyOp::copy(traits.tensor.data() + z + w, W, H, W, intel::coord_t{x, y}, &*src.data());
     }
 

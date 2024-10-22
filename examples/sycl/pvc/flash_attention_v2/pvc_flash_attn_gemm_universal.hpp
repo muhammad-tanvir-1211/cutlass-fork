@@ -118,10 +118,13 @@ public:
   using MmaAtomShape = typename CollectiveMainloop::MmaAtomShape;
   using SubgroupTileShape = typename CollectiveMainloop::SubgroupTileShape;
 
-  static constexpr int FragsM = CollectiveMainloop::FragsM;
-  static constexpr int FragsN = CollectiveMainloop::FragsN;
+  static constexpr int FragsM1 = CollectiveMainloop::FragsM1;
+  static constexpr int FragsN1 = CollectiveMainloop::FragsN1;
+  static constexpr int FragsN2 = CollectiveMainloop::FragsN2;
+  static constexpr int FragsM2 = CollectiveMainloop::FragsM2;
 
   static constexpr int VecC = CollectiveMainloop::VecC;
+  static constexpr int VecA = CollectiveMainloop::VecA;
 
   static constexpr auto sg_per_wg_n = CollectiveMainloop::sg_per_wg_n;
 
@@ -237,7 +240,7 @@ public:
     Tensor tQi = params.mainloop.gmem_tiled_copy_q.get_pvc_flash_tensor(
                                                   make_coord(0, 0, seq_coord, 0),
                                                   make_shape(batch, num_heads, _1{}, head_size),
-                                                  make_stride(Int<FragsM>{} * get<0>(MmaAtomShape()), _1{}));
+                                                  make_stride(Int<FragsM1>{} * get<0>(MmaAtomShape()), _1{}));
 
     constexpr int version =
         is_same_v<typename CollectiveMainloop::GmemTiledCopyK,
@@ -254,9 +257,9 @@ public:
     // Allocate the tiled_mma and the accumulators for the (M,N) subgroup_shape
     TiledMma tiled_mma;
 
-    Tensor out_reg = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM>, Int<FragsN>>{});
-    Tensor max_reg = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM>>{});
-    Tensor sum_reg = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM>>{});
+    Tensor out_reg = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM1>, Int<FragsN2>>{});
+    Tensor max_reg = make_tensor<ElementAccumulator>(Shape<Int<VecA>, Int<FragsM1>>{});
+    Tensor sum_reg = make_tensor<ElementAccumulator>(Shape<Int<VecA>, Int<FragsM1>>{});
 
     fill(max_reg, -INFINITY);
     clear(sum_reg);
@@ -284,26 +287,26 @@ public:
       // 2) Create Tensor S
       Tensor tKi = params.mainloop.gmem_tiled_copy_k.get_pvc_flash_tensor(
                                                     make_coord(0, 0, load_idx, 0),
-                                                    make_shape(batch, num_heads, Int<FragsN / version>{}, head_size),
-                                                    make_stride(Int<version * get<1>(MmaAtomShape())>{}, _1{}));
+                                                    make_shape(batch, num_heads, _1{}, head_size),
+                                                    make_stride(Int<FragsM1>{} * get<0>(MmaAtomShape()), _1{}));
       auto new_tKi = tKi(_, batch_coord, num_heads_coord, _, _);
-      Tensor tSr = make_tensor<ElementAccumulator>(Shape<Int<VecC>, Int<FragsM>, Int<FragsN>>{});
+      Tensor tSr = make_tensor<ElementAccumulator>(Shape<Int<VecA>, Int<FragsM1>, Int<FragsN2>>{});
       clear(tSr);
       // 3) Perform GEMM S = Q*K
       collective_mma.mmaQK(tSr, new_tQi, new_tKi, tSr, head_size, params.mainloop);
       // 4) Call Mask::operator()()
       // Apply causal mask
-      if(params.mask.is_causal && load_idx >= seq_coord) {
+      if(params.mask.is_causal) {
         // mask the elements of each tile where j > i
         // need more information about the copy fragments
         CUTLASS_PRAGMA_NO_UNROLL
-        for(int n = 0; n < FragsN; n++) {
+        for(int n = 0; n < FragsN1; n++) {
           int col_idx = item_id + n * get<1>(MmaAtomShape()) + load_idx;
           CUTLASS_PRAGMA_NO_UNROLL
-          for(int m = 0; m < FragsM; m++) {
+          for(int m = 0; m < FragsM1; m++) {
             int row_idx = m * get<0>(MmaAtomShape()) + seq_coord;
             CUTLASS_PRAGMA_NO_UNROLL
-            for(int row = 0; row < VecC; row++, row_idx++) {
+            for(int row = 0; row < VecA; row++, row_idx++) {
               if(col_idx > row_idx)
                 tSr(row, m, n) = -INFINITY;
             }
@@ -316,10 +319,10 @@ public:
       // 6) Call Sofmax::reduce_sum
       // flash::Softmax<ElementAccumulator> softmax(params.softmax);
       if (nblock == 0)
-        flash::Softmax<ElementAccumulator>::template run<true, VecC, FragsM, FragsN>(tSr, 
+        flash::Softmax<ElementAccumulator>::template run<true, VecA, FragsM1, FragsN2>(tSr, 
                                                           max_reg, sum_reg, out_reg, params.softmax);
       else
-        flash::Softmax<ElementAccumulator>::template run<false, VecC, FragsM, FragsN>(tSr, 
+        flash::Softmax<ElementAccumulator>::template run<false, VecA, FragsM1, FragsN2>(tSr, 
                                                           max_reg, sum_reg, out_reg, params.softmax);
       // 7) Convert S to P (FP32 -> BF16)
       Tensor tPr = make_tensor<typename TiledMma::ValTypeA>(shape(tSr));
@@ -327,14 +330,16 @@ public:
       for (int p_idx = 0; p_idx < size(tPr); p_idx++) {
         tPr(p_idx) = static_cast<typename TiledMma::ValTypeA>(tSr(p_idx));
       }
+
       // 8) Scale out_reg with l
       // 10) Perform GEMM O = 
       Tensor tVi = params.mainloop.gmem_tiled_copy_v.get_pvc_flash_tensor(
-                                                    make_coord(0, 0, load_idx, 0),
-                                                    make_shape(batch, num_heads, Int<FragsN / version>{}, head_size),
-                                                    make_stride(Int<version * get<1>(MmaAtomShape())>{}, _1{}));
+                                                    make_coord(0, 0, load_idx, head_size_coord),
+                                                    make_shape(batch, num_heads, _1{}, head_size),
+                                                    make_stride(Int<FragsM2>{} * get<0>(MmaAtomShape()), _1{}));
+
       auto new_tVi = tVi(_, batch_coord, num_heads_coord, _, _);
-      collective_mma.mmaPV(out_reg, tPr, new_tVi, out_reg, get<1>(subgroup_shape), params.mainloop);
+      collective_mma.mmaPV(out_reg, tPr, new_tVi, out_reg, params.mainloop);
     }
 
     CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};

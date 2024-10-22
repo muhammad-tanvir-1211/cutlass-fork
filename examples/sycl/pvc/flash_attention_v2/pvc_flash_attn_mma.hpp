@@ -119,9 +119,13 @@ struct CollectiveMmaAttention<
   static constexpr uint32_t MaxThreadsPerBlock =
           cute::size(WorkgroupTileShape{}) / cute::size(SubgroupTileShape{}) * SubgroupSize;
 
-  static constexpr int FragsM = get<0>(SubgroupTileShape{}) / get<0>(MmaAtomShape()); // A frags per sub_group
-  static constexpr int FragsN = get<1>(SubgroupTileShape{}) / get<1>(MmaAtomShape()); // B frags per sub_group
-  static constexpr int FragsK = get<2>(SubgroupTileShape{}) / get<2>(MmaAtomShape());
+  static constexpr int FragsM1 = get<0>(SubgroupTileShape{}) / get<0>(MmaAtomShape());
+  static constexpr int FragsN1 = FragsM1;
+  static constexpr int FragsK1 = get<2>(SubgroupTileShape{}) / get<2>(MmaAtomShape());
+
+  static constexpr int FragsM2 = get<0>(SubgroupTileShape{}) / get<0>(MmaAtomShape());
+  static constexpr int FragsN2 = get<1>(SubgroupTileShape{}) / get<1>(MmaAtomShape());
+  static constexpr int FragsK2 = get<0>(SubgroupTileShape{}) / get<0>(MmaAtomShape());
 
   // Calculate the vector width based on the amount of registers 
   // required per work item by dividing the total fragment size by 
@@ -171,7 +175,7 @@ struct CollectiveMmaAttention<
 
     typename Params::XE_Copy_Q copyQ = make_xe_2d_copy<GmemTiledCopyQ>(tensorQ);
     typename Params::XE_Copy_K copyK = make_xe_2d_copy<GmemTiledCopyK>(tensorK);
-    typename Params::XE_Copy_V copyV = make_xe_2d_copy<GmemTiledCopyK>(tensorV);
+    typename Params::XE_Copy_V copyV = make_xe_2d_copy<GmemTiledCopyV>(tensorV);
     return Params{copyQ, copyK, copyV};
   }
 
@@ -213,16 +217,16 @@ struct CollectiveMmaAttention<
 
     constexpr int version = is_same_v<GmemTiledCopyK, XE_2D_U16x16x16x2x1_V> ? 1 : 2;
 
-    Tensor tQr = make_tensor<typename TiledMma::ValTypeA>(Shape<Int<get<0>(SubgroupTileShape{}) * FragsK>, 
+    Tensor tQr = make_tensor<typename TiledMma::ValTypeA>(Shape<Int<get<0>(SubgroupTileShape{}) * FragsK1>, 
                                                                 Int<1>>{});
     Tensor tKr = make_tensor<typename TiledMma::ValTypeB>(Shape<Int<get<2>(SubgroupTileShape{}) * version>, 
-                                                                Int<FragsN / version>>{});
+                                                                Int<FragsK1 / version>>{});
 
     Tensor tQr_view = make_tensor(static_cast<decltype(tQr) &&>(tQr).data(),
-                            Shape<Int<VecA>, Int<FragsM>, Int<FragsK>>{});
+                            Shape<Int<VecA>, Int<FragsM1>, Int<FragsK1>>{});
     Tensor tKr_view = make_tensor(static_cast<decltype(tKr) &&>(tKr).data(),
-                            Shape<Int<VecB>, Int<FragsN>, Int<FragsK>>{},
-                            Stride<_1, Int<VecB * FragsK>, Int<VecB>>{});
+                            Shape<Int<VecB>, Int<FragsK1>, Int<FragsK1>>{},
+                            Stride<_1, Int<VecB>, Int<VecB * FragsK1>>{});
 
     // Prefetch K
     int prefetch_idx = 0;
@@ -257,19 +261,18 @@ struct CollectiveMmaAttention<
     FragP const &tPr,
     TensorV gV,
     FragSrc const &frag_src,
-    int const &reduce_dim,
     Params const &params) {
 
     TiledMma tiled_mma;
 
     constexpr int version = is_same_v<GmemTiledCopyV, XE_2D_U16x16x16x2x1_V> ? 1 : 2;
 
-    Tensor tVr = make_tensor<typename TiledMma::ValTypeB>(Shape<Int<get<2>(SubgroupTileShape{}) * version>, 
-                                                                Int<FragsN / version>>{});
+    Tensor tVr = make_tensor<typename TiledMma::ValTypeB>(Shape<Int<get<0>(SubgroupTileShape{}) * version>, 
+                                                                Int<FragsN2 / version>>{});
 
     Tensor tVr_view = make_tensor(static_cast<decltype(tVr) &&>(tVr).data(),
-                            Shape<Int<VecB>, Int<FragsN>, Int<FragsK>>{},
-                            Stride<_1, Int<VecB * FragsK>, Int<VecB>>{});
+                            Shape<Int<VecB>, Int<FragsN2>, Int<FragsN2>>{},
+                            Stride<_1, Int<VecB * FragsN2>, Int<VecB>>{});
 
     // Prefetch K
     int prefetch_idx = 0;
@@ -277,24 +280,11 @@ struct CollectiveMmaAttention<
     //   prefetch(params.gmem_tiled_copy_v, gV(_, _, prefetch_idx));
     // }
 
-    Tensor tPr_view = make_tensor<typename TiledMma::ValTypeA>(Shape<Int<VecA>, Int<FragsM>, Int<FragsK>>{});
+    load(params.gmem_tiled_copy_v, gV(_, _, 0), tVr);
 
-    CUTLASS_PRAGMA_UNROLL
-    for (int idx = 0, z = 0; idx < reduce_dim; z += size(tPr_view)) {
-      load(params.gmem_tiled_copy_v, gV(_, _, idx), tVr);
+    cute::gemm(tiled_mma, accum, tPr, tVr_view, frag_src);
 
-      // initialize the P view
-      for(int i = 0; i < size(tPr_view); i++) {
-        tPr_view(i) = tPr(i + z);
-      }
-
-      cute::gemm(tiled_mma, accum, tPr_view, tVr_view, frag_src);
-
-      // prefetch(params.gmem_tiled_copy_v, gV(_, _, prefetch_idx));
-
-      idx += get<2>(SubgroupTileShape{});
-      prefetch_idx += get<2>(SubgroupTileShape{});
-    }
+    // prefetch(params.gmem_tiled_copy_v, gV(_, _, prefetch_idx));
   }
 
 };
