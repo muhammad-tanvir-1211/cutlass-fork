@@ -298,14 +298,13 @@ public:
       // Apply causal mask
       if(params.mask.is_causal) {
         // mask the elements of each tile where j > i
-        // need more information about the copy fragments
-        CUTLASS_PRAGMA_NO_UNROLL
-        for(int n = 0; n < FragsN1; n++) {
-          int col_idx = item_id + n * get<1>(MmaAtomShape()) + load_idx;
-          CUTLASS_PRAGMA_NO_UNROLL
+        int col_idx = item_id + load_idx;
+        CUTLASS_PRAGMA_UNROLL
+        for(int n = 0; n < FragsN2; n++, col_idx += get<1>(MmaAtomShape())) {
+          CUTLASS_PRAGMA_UNROLL
           for(int m = 0; m < FragsM1; m++) {
-            int row_idx = m * get<0>(MmaAtomShape()) + seq_coord;
-            CUTLASS_PRAGMA_NO_UNROLL
+            int row_idx = m * VecA + seq_coord;
+            CUTLASS_PRAGMA_UNROLL
             for(int row = 0; row < VecA; row++, row_idx++) {
               if(col_idx > row_idx)
                 tSr(row, m, n) = -INFINITY;
@@ -341,6 +340,10 @@ public:
       auto new_tVi = tVi(_, batch_coord, num_heads_coord, _, _);
       collective_mma.mmaPV(out_reg, tPr, new_tVi, out_reg, params.mainloop);
     }
+
+    // Reduce the sum of exponents across the subgroup before scaling/normalizing output
+    flash::SumOp<ElementAccumulator> op;
+    flash::Softmax<ElementAccumulator>::template subgroup_allreduce<false, VecA, FragsM1, FragsN2>(sum_reg, op);
 
     CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
 

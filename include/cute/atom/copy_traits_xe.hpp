@@ -113,8 +113,6 @@ struct XE_2D_LD_Unpack {
         int W = size<0>(shape_whd) * sizeof(typename Copy_Traits::CopyInternalType);
         int H = size<1>(shape_whd);
         auto [x, y, z, w] = get_coordinates(traits.tensor.stride(), src);
-        if(ThreadIdxX() == 0)
-           printf("Load H: %d | W: %d | x: %d | y: %d\n", H, W, x, y);
         CopyOp::copy(traits.tensor.data() + z + w, W, H, W, intel::coord_t{x, y},
                 &*dst.data());
     }
@@ -498,8 +496,6 @@ struct XE_2D_ST_Unpack {
         int H = size<1>(shape_whd);
         int W = size<0>(shape_whd) * sizeof(typename Copy_Traits::CopyInternalType);
         auto [x, y, z, w] = get_coordinates(traits.tensor.stride(), dst);
-        if(ThreadIdxX() == 0)
-           printf("Store H: %d | W: %d | x: %d | y: %d\n", H, W, x, y);
         CopyOp::copy(traits.tensor.data() + z + w, W, H, W, intel::coord_t{x, y}, &*src.data());
     }
 

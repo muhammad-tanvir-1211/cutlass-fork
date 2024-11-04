@@ -39,6 +39,18 @@
 
 namespace flash {
 
+template<typename T>
+struct MaxOp {
+    CUTLASS_DEVICE T
+    operator()(T const & x, T const & y) { return x > y ? x : y; }
+};
+
+template<typename T>
+struct SumOp {
+    CUTLASS_DEVICE T
+    operator()(T const & x, T const & y) { return x + y; }
+};
+
 template <typename Element>
 struct Softmax {
     struct Arguments {
@@ -52,18 +64,6 @@ struct Softmax {
         Arguments x{static_cast<Element>(args.scale)};
         return x;
     }
-
-    template<typename T>
-    struct MaxOp {
-        CUTLASS_DEVICE T
-        operator()(T const & x, T const & y) { return x > y ? x : y; }
-    };
-
-    template<typename T>
-    struct SumOp {
-        CUTLASS_DEVICE T
-        operator()(T const & x, T const & y) { return x + y; }
-    };
 
     template <
     int SizeA,
@@ -96,8 +96,8 @@ struct Softmax {
     class FragDst,
     class Op
     >
-    CUTLASS_DEVICE static void reduce(FragSrc const &src, FragDst &dst, Op op) {
-        // reduce across all the N tiles in shape <VecC, FragsM, FragsN>
+    CUTLASS_DEVICE static void workitem_reduce(FragSrc const &src, FragDst &dst, Op op) {
+        // reduction per work item
         CUTLASS_PRAGMA_UNROLL
         for(int x = 0; x < SizeA; x++) {
             CUTLASS_PRAGMA_UNROLL
@@ -109,7 +109,17 @@ struct Softmax {
                 }
             }
         }
+    }
 
+    template <
+    bool zero_init,
+    int SizeA,
+    int SizeB,
+    int SizeC,
+    class FragDst,
+    class Op
+    >
+    CUTLASS_DEVICE static void subgroup_allreduce(FragDst &dst, Op op) {
         // reduce across the sub_group to get the final output
         auto sg = syclcompat::get_nd_item<1>().get_sub_group();
         CUTLASS_PRAGMA_UNROLL
@@ -122,6 +132,21 @@ struct Softmax {
                 }
             }
         }
+    }
+
+    template <
+    bool zero_init,
+    int SizeA,
+    int SizeB,
+    int SizeC,
+    class FragSrc,
+    class FragDst,
+    class Op
+    >
+    CUTLASS_DEVICE static void reduce(FragSrc const &src, FragDst &dst, Op op) {
+        // reduce across all the N tiles in shape <VecC, FragsM, FragsN>
+        workitem_reduce<zero_init, SizeA, SizeB, SizeC>(src, dst, op);
+        subgroup_allreduce<zero_init, SizeA, SizeB, SizeC>(dst, op);
     }
 
     template <
@@ -147,7 +172,7 @@ struct Softmax {
     >
     CUTLASS_DEVICE static void reduce_sum(FragSrc const &src, FragSum& sum) {
         SumOp<Element> sum_op;
-        reduce<zero_init, SizeA, SizeB, SizeC>(src, sum, sum_op);
+        workitem_reduce<zero_init, SizeA, SizeB, SizeC>(src, sum, sum_op);
     }
 
     template <
@@ -187,24 +212,18 @@ struct Softmax {
         for(int x = 0; x < SizeA; x++) {
             CUTLASS_PRAGMA_UNROLL
             for(int y = 0; y < SizeB; y++) {
-                Element curr_scale = expf((max_prev(x, y) - max(x, y)) * params.scale);
+                Element curr_max = max(x, y) == -INFINITY ? 0.0f : max(x, y);
+                Element curr_scale = expf((max_prev(x, y) - curr_max) * params.scale);
                 sum(x, y) *= curr_scale;
                 CUTLASS_PRAGMA_UNROLL
                 for(int z = 0; z < SizeC; z++) {
-                    out(x, y, z) /= curr_scale;
+                    out(x, y, z) *= curr_scale;
                 }
             }
         }
 
         scale_exp_log2<SizeA, SizeB, SizeC>(frag_s, max, params.scale);
-        cute::Tensor sum_prev = cute::make_fragment_like(sum);
-        cute::copy(sum, sum_prev);
         reduce_sum<is_first, SizeA, SizeB, SizeC>(frag_s, sum);
-
-        CUTLASS_PRAGMA_UNROLL
-        for (int i = 0; i < cute::size(sum); i++) {
-            sum(i) += sum_prev(i);
-        }
     }
 
     Params params;

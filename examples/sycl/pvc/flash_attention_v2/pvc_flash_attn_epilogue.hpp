@@ -228,9 +228,9 @@ public:
       for (int y = 0; y < FragsM; y++) {
         
         ElementLSE curr_sum = sum(x, y);
-        ElementO scale = curr_sum == 0.f ? 1.f : 1.f / curr_sum;
+        ElementO scale = (curr_sum == 0.f || curr_sum != curr_sum) ? 1.f : 1.f / curr_sum;
         
-        tLSEr(x, y) = curr_sum == 0.f ? INFINITY : max(x, y) * softmax_scale + logf(curr_sum);
+        tLSEr(x, y) = curr_sum == 0.f ? -INFINITY : max(x, y) * softmax_scale + logf(curr_sum);
         
         CUTLASS_PRAGMA_UNROLL
         for (int z = 0; z < FragsN; z++) {
@@ -258,9 +258,9 @@ public:
     auto sg = syclcompat::get_nd_item<1>().get_sub_group();
     const int lane_id = static_cast<int>(sg.get_local_linear_id());
 
-    // use only 1 work item per sub_group to write
-    // lse since all work items within subgroup have
-    // the same sum() data stored in registers
+    // use only 1 work item per sub_group to write lse since all
+    // work items within subgroup have the same sum() data stored
+    // in registers
     if(lane_id == 0) {
       int count = 0;
       CUTLASS_PRAGMA_UNROLL
