@@ -61,11 +61,12 @@ struct Softmax {
 
     static constexpr Params
     to_underlying_arguments(Arguments const& args) {
-        Arguments x{static_cast<Element>(args.scale)};
+        Arguments x{static_cast<Element>(args.scale) * static_cast<Element>(M_LOG2E)};
         return x;
     }
 
     template <
+    bool CheckInf,
     int SizeA,
     int SizeB,
     int SizeC,
@@ -78,10 +79,10 @@ struct Softmax {
         for(int x = 0; x < SizeA; x++) {
             CUTLASS_PRAGMA_UNROLL
             for(int y = 0; y < SizeB; y++) {
-                Element max_scale = max(x, y) == -INFINITY ? Element{0} : max(x, y);
+                Element max_scale = !CheckInf ? max(x, y) : max(x, y) == -INFINITY ? Element{0} : max(x, y);
                 CUTLASS_PRAGMA_UNROLL
                 for(int z = 0; z < SizeC; z++) {
-                    acc(x, y, z) = expf((acc(x, y, z) - max_scale) * scale);
+                    acc(x, y, z) = exp2f((acc(x, y, z) - max_scale) * scale);
                 }
             }
         }
@@ -177,6 +178,7 @@ struct Softmax {
 
     template <
     bool is_first,
+    bool CheckInf,
     int SizeA,
     int SizeB,
     int SizeC,
@@ -188,12 +190,13 @@ struct Softmax {
     CUTLASS_DEVICE static typename std::enable_if<is_first>::type
     run(FragAcc &frag_s, FragMax& max, FragSum& sum, FragOut&, Params const &params) {
         reduce_max<is_first, SizeA, SizeB, SizeC>(frag_s, max);
-        scale_exp_log2<SizeA, SizeB, SizeC>(frag_s, max, params.scale);
+        scale_exp_log2<CheckInf, SizeA, SizeB, SizeC>(frag_s, max, params.scale);
         reduce_sum<is_first, SizeA, SizeB, SizeC>(frag_s, sum);
     }
 
     template <
     bool is_first,
+    bool CheckInf,
     int SizeA,
     int SizeB,
     int SizeC,
@@ -212,8 +215,8 @@ struct Softmax {
         for(int x = 0; x < SizeA; x++) {
             CUTLASS_PRAGMA_UNROLL
             for(int y = 0; y < SizeB; y++) {
-                Element curr_max = max(x, y) == -INFINITY ? 0.0f : max(x, y);
-                Element curr_scale = expf((max_prev(x, y) - curr_max) * params.scale);
+                Element curr_max = !CheckInf ? max(x, y) : max(x, y) == -INFINITY ? 0.0f : max(x, y);
+                Element curr_scale = exp2f((max_prev(x, y) - curr_max) * params.scale);
                 sum(x, y) *= curr_scale;
                 CUTLASS_PRAGMA_UNROLL
                 for(int z = 0; z < SizeC; z++) {
@@ -222,7 +225,7 @@ struct Softmax {
             }
         }
 
-        scale_exp_log2<SizeA, SizeB, SizeC>(frag_s, max, params.scale);
+        scale_exp_log2<CheckInf, SizeA, SizeB, SizeC>(frag_s, max, params.scale);
         reduce_sum<is_first, SizeA, SizeB, SizeC>(frag_s, sum);
     }
 

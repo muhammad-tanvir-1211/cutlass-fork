@@ -424,7 +424,7 @@ struct ExampleRunner {
       cutlass::gemm::GemmUniversalMode::kGemm,
       problem_size,
       {block_Q.get(), stride_Q, block_K.get(), stride_K, block_V.get(), stride_V},
-      {options.is_causal}, {options.softmax_scale},
+      {options.softmax_scale},
       {{1}, block_O.get(), stride_O, block_lse.get(), stride_LSE},
       hw_info
     };
@@ -464,7 +464,10 @@ struct ExampleRunner {
       syclcompat::wait();
 
       float cute_time = timer.seconds() / options.iterations;
-      double tflops = (2.0 * options.batch * options.num_heads * options.seq_len * options.head_size) * 1e-12;
+      double flops_qk = 2.0 * options.batch * options.num_heads * options.seq_len * options.seq_len * options.head_size;
+      double flops_softmax = 5.0 * options.seq_len * options.seq_len; // seq_len^2 + seq_len^2 + 3 * seq_len^2
+      double flops_pv = 2.0 * options.batch * options.num_heads * options.seq_len * options.head_size * options.seq_len;
+      double tflops = (flops_qk + flops_softmax + flops_pv) * 1e-12;
       std::cout << "Problem Size: " << options.batch << 'x' << options.num_heads << 'x' << options.seq_len << 'x' << options.head_size << std::endl;
       printf("Cutlass Flash Attention Performance:     [%4.3f]TFlop/s  (%6.4f)ms\n", tflops / cute_time, cute_time*1000);
     }
@@ -537,7 +540,6 @@ int main(int argc, const char** argv)
   using FusionCallBacks = cutlass::epilogue::fusion::FusionCallbacks<EpilogueDispatchPolicy, EpilogueOp, TileShape,
           decltype(tile_shape(TiledMma()))>;
   
-  // TODO: need to remove copy for LSE as it is not required
   using CollectiveEpilogue = cutlass::epilogue::collective::CollectiveEpilogueAttention<
           EpilogueDispatchPolicy,
           TileShape,
@@ -548,31 +550,61 @@ int main(int argc, const char** argv)
           FusionCallBacks,
           XE_2D_U32x8x16x1x1_ST_N>;
 
-// Mainloop
-  using CollectiveMainloop = cutlass::gemm::collective::CollectiveMmaAttention<
-          GEMMDispatchPolicy,
-          TileShape,
-          ElementInputQ,
-          cute::Stride<int64_t, int64_t, int64_t, cute::Int<1>>,
-          ElementInputKV,
-          cute::Stride<int64_t, int64_t, cute::Int<1>, int64_t>,
-          ElementInputKV,
-          cute::Stride<int64_t, int64_t, int64_t, cute::Int<1>>,
-          TiledMma,
-          GmemTiledCopyQ,  // Q
-          GmemTiledCopyK,  // K
-          GmemTiledCopyV  // V
-  >;
+  if(options.is_causal) {
+  // Mainloop
+    using CollectiveMainloop = cutlass::gemm::collective::CollectiveMmaAttention<
+            GEMMDispatchPolicy,
+            TileShape,
+            ElementInputQ,
+            cute::Stride<int64_t, int64_t, int64_t, cute::Int<1>>,
+            ElementInputKV,
+            cute::Stride<int64_t, int64_t, cute::Int<1>, int64_t>,
+            ElementInputKV,
+            cute::Stride<int64_t, int64_t, int64_t, cute::Int<1>>,
+            TiledMma,
+            GmemTiledCopyQ,  // Q
+            GmemTiledCopyK,  // K
+            GmemTiledCopyV,  // V,
+            true
+    >;
 
-  using GemmKernel = cutlass::gemm::kernel::GemmUniversalAttention<
-  Shape<int, int, int, int>,
-  CollectiveMainloop,
-  CollectiveEpilogue
-  >;
+    using GemmKernel = cutlass::gemm::kernel::GemmUniversalAttention<
+    Shape<int, int, int, int>,
+    CollectiveMainloop,
+    CollectiveEpilogue
+    >;
 
-  ExampleRunner<GemmKernel> runner;
+    ExampleRunner<GemmKernel> runner;
 
-  runner.run(options, hw_info);
+    runner.run(options, hw_info);
+  } else {
+  // Mainloop
+    using CollectiveMainloop = cutlass::gemm::collective::CollectiveMmaAttention<
+            GEMMDispatchPolicy,
+            TileShape,
+            ElementInputQ,
+            cute::Stride<int64_t, int64_t, int64_t, cute::Int<1>>,
+            ElementInputKV,
+            cute::Stride<int64_t, int64_t, cute::Int<1>, int64_t>,
+            ElementInputKV,
+            cute::Stride<int64_t, int64_t, int64_t, cute::Int<1>>,
+            TiledMma,
+            GmemTiledCopyQ,  // Q
+            GmemTiledCopyK,  // K
+            GmemTiledCopyV,  // V
+            false
+    >;
+
+    using GemmKernel = cutlass::gemm::kernel::GemmUniversalAttention<
+    Shape<int, int, int, int>,
+    CollectiveMainloop,
+    CollectiveEpilogue
+    >;
+
+    ExampleRunner<GemmKernel> runner;
+
+    runner.run(options, hw_info);
+  }
 
   return 0;
 }

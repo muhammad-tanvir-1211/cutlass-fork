@@ -56,7 +56,8 @@ template <
   class TiledMma_,
   class GmemTiledCopyQ_,
   class GmemTiledCopyK_,
-  class GmemTiledCopyV_>
+  class GmemTiledCopyV_,
+  bool CausalMask_>
 struct CollectiveMmaAttention {
   static_assert(cutlass::detail::dependent_false<ElementQ_>, "Could not find a mainloop specialization.");
 };
@@ -75,7 +76,8 @@ template <
   class TiledMma_,
   class GmemTiledCopyQ_,
   class GmemTiledCopyK_,
-  class GmemTiledCopyV_>
+  class GmemTiledCopyV_,
+  bool CausalMask_>
 struct CollectiveMmaAttention<
     MainloopIntelPVC<Stages>,
     TileShape_,
@@ -88,7 +90,8 @@ struct CollectiveMmaAttention<
     TiledMma_,
     GmemTiledCopyQ_,
     GmemTiledCopyK_,
-    GmemTiledCopyV_>
+    GmemTiledCopyV_,
+    CausalMask_>
 {
   //
   // Type Aliases
@@ -108,6 +111,7 @@ struct CollectiveMmaAttention<
   using GmemTiledCopyV = GmemTiledCopyV_;
   using ArchTag = typename DispatchPolicy::ArchTag;
 
+  static constexpr bool CausalMask = CausalMask_;
   static constexpr int SubgroupSize = DispatchPolicy::SubgroupSize;
 
   using MmaAtomShape = typename TiledMma::AtomShape_MNK;

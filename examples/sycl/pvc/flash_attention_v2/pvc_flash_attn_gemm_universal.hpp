@@ -35,7 +35,6 @@
 #include "cutlass/gemm/gemm.h"
 #include "cutlass/gemm/dispatch_policy.hpp"
 
-#include "mask.hpp"
 #include "online_softmax.hpp"
 #include "pvc_flash_attn_mma.hpp"
 
@@ -85,9 +84,6 @@ public:
   using MainloopArguments = typename CollectiveMainloop::Arguments;
   using MainloopParams = typename CollectiveMainloop::Params;
 
-  using MaskArguments = typename flash::Mask::Arguments;
-  using MaskParams = typename flash::Mask::Params;
-
   using SoftmaxArguments = typename flash::Softmax<ElementAccumulator>::Arguments;
   using SoftmaxParams = typename flash::Softmax<ElementAccumulator>::Params;
 
@@ -113,6 +109,7 @@ public:
   // MSVC requires the cast to fix a warning-as-error.
   static constexpr int SharedStorageSize = 0;
 
+  static constexpr bool CausalMask = CollectiveMainloop::CausalMask;
   static constexpr int SubgroupSize = CollectiveMainloop::SubgroupSize; // sub_group size
   static constexpr uint32_t MaxThreadsPerBlock = CollectiveMainloop::MaxThreadsPerBlock;
   using MmaAtomShape = typename CollectiveMainloop::MmaAtomShape;
@@ -139,7 +136,6 @@ public:
     GemmUniversalMode mode{};
     ProblemShape problem_shape{};
     MainloopArguments mainloop{};
-    MaskArguments mask{};
     SoftmaxArguments softmax{};
     EpilogueArguments epilogue{};
     KernelHardwareInfo hw_info{};
@@ -151,7 +147,6 @@ public:
     GemmUniversalMode mode;
     ProblemShape problem_shape;
     MainloopParams mainloop;
-    MaskParams mask;
     SoftmaxArguments softmax;
     EpilogueParams epilogue;
   };
@@ -169,7 +164,6 @@ public:
       args.mode,
       args.problem_shape,
       CollectiveMainloop::to_underlying_arguments(args.problem_shape, args.mainloop, workspace),
-      flash::Mask::to_underlying_arguments(args.mask),
       flash::Softmax<ElementAccumulator>::to_underlying_arguments(args.softmax),
       CollectiveEpilogue::to_underlying_arguments(args.problem_shape, args.epilogue, workspace)
     };
@@ -274,9 +268,8 @@ public:
     const int causal_seq_len = seq_coord + get<0>(subgroup_shape);
     const int non_causal_seq_len = seq_len;
 
-    const int nblock_limit = params.mask.is_causal ? 
-                                cute::ceil_div(causal_seq_len, get<1>(subgroup_shape)) : 
-                                cute::ceil_div(non_causal_seq_len, get<1>(subgroup_shape));
+    const int nblock_limit = CausalMask ? cute::ceil_div(causal_seq_len, get<1>(subgroup_shape)) 
+                                : cute::ceil_div(non_causal_seq_len, get<1>(subgroup_shape));
 
     const int item_id = thread_idx % SubgroupSize;
 
@@ -296,7 +289,7 @@ public:
       collective_mma.mmaQK(tSr, new_tQi, new_tKi, tSr, head_size, params.mainloop);
       // 4) Call Mask::operator()()
       // Apply causal mask
-      if(params.mask.is_causal) {
+      if constexpr (CausalMask) {
         // mask the elements of each tile where j > i
         int col_idx = item_id + load_idx;
         CUTLASS_PRAGMA_UNROLL
@@ -318,10 +311,10 @@ public:
       // 6) Call Sofmax::reduce_sum
       // flash::Softmax<ElementAccumulator> softmax(params.softmax);
       if (nblock == 0)
-        flash::Softmax<ElementAccumulator>::template run<true, VecA, FragsM1, FragsN2>(tSr, 
+        flash::Softmax<ElementAccumulator>::template run<true, CausalMask, VecA, FragsM1, FragsN2>(tSr, 
                                                           max_reg, sum_reg, out_reg, params.softmax);
       else
-        flash::Softmax<ElementAccumulator>::template run<false, VecA, FragsM1, FragsN2>(tSr, 
+        flash::Softmax<ElementAccumulator>::template run<false, CausalMask, VecA, FragsM1, FragsN2>(tSr, 
                                                           max_reg, sum_reg, out_reg, params.softmax);
       // 7) Convert S to P (FP32 -> BF16)
       Tensor tPr = make_tensor<typename TiledMma::ValTypeA>(shape(tSr));
