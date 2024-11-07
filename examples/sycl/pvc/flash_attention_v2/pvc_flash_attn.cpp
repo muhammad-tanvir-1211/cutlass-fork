@@ -521,7 +521,7 @@ int main(int argc, const char** argv)
   using GmemTiledCopyV = XE_2D_U16x32x32_LD_V;
 
   // Workgroup-level tile
-  using TileShape = Shape<_512, _64, _32>;
+  using TileShape = Shape<_128, _64, _32>;
 
   using TiledMma = TiledMMA<MMA_Atom<XE_8x16x16_F32BF16BF16F32_TT>,
           Layout<Shape<_1,_1,_1>>,

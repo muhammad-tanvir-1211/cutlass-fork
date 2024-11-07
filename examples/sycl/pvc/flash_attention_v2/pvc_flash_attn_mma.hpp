@@ -209,12 +209,28 @@ struct CollectiveMmaAttention<
                             Shape<Int<VecB>, Int<FragsK1>, Int<FragsK1>>{},
                             Stride<_1, Int<VecB * FragsK1>, Int<VecB>>{});
 
+    auto sub_group_id = ThreadIdxX() / SubgroupSize;
+
+    Tensor tQi = make_tensor(
+        make_inttuple_iter(
+            *gQ.data() +
+            make_coord((sub_group_id % sg_per_wg_n % 4) * get<0>(MmaAtomShape{}), 0)),
+        make_layout(make_shape(_1{}, _1{}, head_size),
+                    make_stride(_1{}, E<0>{}, E<1>{})));
+    Tensor tKi = make_tensor(
+        make_inttuple_iter(
+            *gK.data() +
+            make_coord((sub_group_id / sg_per_wg_n % 2 * 2) * get<1>(MmaAtomShape{}),
+                       (sub_group_id / sg_per_wg_n / 2 % 2) * get<2>(MmaAtomShape{}))),
+        make_layout(make_shape(_1{}, _1{}, head_size),
+                    make_stride(_1{}, E<0>{}, E<1>{})));
+
     // Prefetch K
     int prefetch_idx = 0;
-    // for(int i = 0; i < DispatchPolicy::Stages; i++, prefetch_idx += get<2>(SubgroupTileShape{})) {
-    //   prefetch(params.gmem_tiled_copy_q, gQ(_, _, prefetch_idx));
-    //   prefetch(params.gmem_tiled_copy_k, gK(_, _, prefetch_idx));
-    // }
+    for(int i = 0; i < DispatchPolicy::Stages; i++, prefetch_idx += get<2>(SubgroupTileShape{})) {
+      prefetch(params.gmem_tiled_copy_q, tQi(_, _, prefetch_idx));
+      prefetch(params.gmem_tiled_copy_k, tKi(_, _, prefetch_idx));
+    }
 
     CUTLASS_PRAGMA_UNROLL
     for (int head_tile = 0; head_tile < head_size; head_tile += get<2>(SubgroupTileShape{})) {
@@ -223,10 +239,10 @@ struct CollectiveMmaAttention<
 
       cute::gemm(tiled_mma, accum, tQr_view, tKr_view, frag_src);
 
-      // prefetch(params.gmem_tiled_copy_q, gQ(_, _, prefetch_idx));
-      // prefetch(params.gmem_tiled_copy_k, gK(_, _, prefetch_idx));
+      prefetch(params.gmem_tiled_copy_q, tQi(_, _, prefetch_idx));
+      prefetch(params.gmem_tiled_copy_k, tKi(_, _, prefetch_idx));
 
-      // prefetch_idx += get<2>(SubgroupTileShape{});
+      prefetch_idx += get<2>(SubgroupTileShape{});
     }
   }
 
