@@ -82,7 +82,7 @@ struct Softmax {
                 Element max_scale = !CheckInf ? max(x, y) : max(x, y) == -INFINITY ? Element{0} : max(x, y);
                 CUTLASS_PRAGMA_UNROLL
                 for(int z = 0; z < SizeC; z++) {
-                    acc(x, y, z) = exp2f((acc(x, y, z) - max_scale) * scale);
+                    acc(x, y, z) = sycl::native::exp2((acc(x, y, z) - max_scale) * scale);
                 }
             }
         }
@@ -216,7 +216,7 @@ struct Softmax {
             CUTLASS_PRAGMA_UNROLL
             for(int y = 0; y < SizeB; y++) {
                 Element curr_max = !CheckInf ? max(x, y) : max(x, y) == -INFINITY ? 0.0f : max(x, y);
-                Element curr_scale = exp2f((max_prev(x, y) - curr_max) * params.scale);
+                Element curr_scale = sycl::native::exp2((max_prev(x, y) - curr_max) * params.scale);
                 sum(x, y) *= curr_scale;
                 CUTLASS_PRAGMA_UNROLL
                 for(int z = 0; z < SizeC; z++) {
