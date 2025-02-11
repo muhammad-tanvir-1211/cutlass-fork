@@ -59,8 +59,19 @@ int main(int argc, const char **argv) {
                                    Layout<Shape<_16, _1, _4>, Stride<_1, _64, _16>>, // Vec Iteration, Hardware Jump,
                                                                                      // Iteration Jump for both M and N
                                    _64>>;                                            // K is going to be 64
-    return options.is_causal ? FMHAConfig<true, Shape<_128, _64, _64>, TiledMma>::run(options)
-                             : FMHAConfig<false, Shape<_128, _64, _64>, TiledMma>::run(options);
+    if(options.is_causal) {
+      if(options.is_training) {
+        return FMHAConfig<true, true, Shape<_128, _64, _64>, TiledMma>::run(options);
+      } else {
+        return FMHAConfig<true, false, Shape<_128, _64, _64>, TiledMma>::run(options);
+      }
+    } else {
+      if(options.is_training) {
+        return FMHAConfig<false, true, Shape<_128, _64, _64>, TiledMma>::run(options);
+      } else {
+        return FMHAConfig<false, false, Shape<_128, _64, _64>, TiledMma>::run(options);
+      }
+    }
   } else if (options.head_size == 128) {
     using TiledMma = TiledMMA<MMA_Atom<XE_8x16x16_F32BF16BF16F32_TT>, Layout<Shape<_8, _2, _1>, Stride<_2, _1, _1>>,
                               // Atom, Hardware(NUMBER OF CONCURRENT MMA), Iteration
@@ -70,8 +81,19 @@ int main(int argc, const char **argv) {
                                                                                      // Iteration Jump for both M and N
                                    _64>>;                                            // K
 
-    return options.is_causal ? FMHAConfig<true, Shape<_128, _128, _64>, TiledMma>::run(options)
-                             : FMHAConfig<false, Shape<_128, _128, _64>, TiledMma>::run(options);
+    if(options.is_causal) {
+      if(options.is_training) {
+        return FMHAConfig<true, true, Shape<_128, _128, _64>, TiledMma>::run(options);
+      } else {
+        return FMHAConfig<true, false, Shape<_128, _128, _64>, TiledMma>::run(options);
+      }
+    } else {
+      if(options.is_training) {
+        return FMHAConfig<false, true, Shape<_128, _128, _64>, TiledMma>::run(options);
+      } else {
+        return FMHAConfig<false, false, Shape<_128, _128, _64>, TiledMma>::run(options);
+      }
+    }
   } else {
     std::cerr << "Aborting execution." << std::endl;
     return -1;

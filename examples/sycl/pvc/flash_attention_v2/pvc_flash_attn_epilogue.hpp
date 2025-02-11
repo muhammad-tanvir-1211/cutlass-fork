@@ -51,12 +51,12 @@ namespace collective {
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
-template <class DispatchPolicy, class... Args> class CollectiveEpilogueAttention {
+template <bool Training, class DispatchPolicy, class... Args> class CollectiveEpilogueAttention {
   static_assert(cutlass::detail::dependent_false<DispatchPolicy>, "Could not find an epilogue specialization.");
 };
 
-template <class CtaTileMNK_, class ElementO_, class StrideO_, class ElementLSE_, class StrideLSE_, class CopyOpO_, class CopyOpLSE_>
-class CollectiveEpilogueAttention<IntelPVCEpilogue, CtaTileMNK_, ElementO_, StrideO_, ElementLSE_, StrideLSE_, CopyOpO_, CopyOpLSE_>{
+template <bool Training_, class CtaTileMNK_, class ElementO_, class StrideO_, class ElementLSE_, class StrideLSE_, class CopyOpO_, class CopyOpLSE_>
+class CollectiveEpilogueAttention<Training_, IntelPVCEpilogue, CtaTileMNK_, ElementO_, StrideO_, ElementLSE_, StrideLSE_, CopyOpO_, CopyOpLSE_>{
 public:
   //
   // Type Aliases
@@ -76,6 +76,7 @@ public:
   using ElementCompute = ElementO_;
 
   static constexpr int SubgroupSize = DispatchPolicy::SubgroupSize;
+  static constexpr bool Training = Training_;
 
   static_assert(cute::rank(CtaTileMNK{}) == 3, "CtaTileMNK must be rank-3: [CTA_M, CTA_N, CTA_K]");
   static_assert(cute::rank(StrideO{}) == 3, "StrideO must be rank-3: [seq_len, head_size, batch * num_heads]");
@@ -94,16 +95,6 @@ private:
   constexpr static bool is_destination_supported = not cute::is_void_v<ElementO>;
 
 public:
-  using EmptyType = cute::tuple<>;
-
-  struct TensorStorageImpl : cute::tuple<EmptyType, EmptyType> {};
-
-  struct SharedStorage {
-    using TensorStorage = TensorStorageImpl;
-
-    TensorStorage tensors;
-  };
-  using TensorStorage = typename SharedStorage::TensorStorage;
 
   // Host side epilogue arguments
   struct Arguments {
@@ -164,7 +155,7 @@ public:
   }
 
   CUTLASS_HOST_DEVICE
-  CollectiveEpilogueAttention(Params const &params_, TensorStorage const &) : params(params_) {}
+  CollectiveEpilogueAttention(Params const &params_) : params(params_) {}
 
   template <class ProblemShape, class TileCoord, class FragOut, class FragMax, class FragSum, class TiledMma>
   CUTLASS_DEVICE void operator()(ProblemShape problem_shape, TileCoord tile_coord, FragOut &out, FragMax const &max,
@@ -203,10 +194,12 @@ public:
     CUTLASS_PRAGMA_UNROLL
     for (int y = 0, indx = 0; y < FragsM; y++) {
       CUTLASS_PRAGMA_UNROLL
-      for (int x = 0; x < Vec; x++) {
+      for (int x = 0; x < Vec; x++, indx++) {
         auto cur_sum = reduce_over_group(g, sum(indx), sycl::plus<>());
-        if (indx++ == lane_id) {
-          tLSEr(0) = cur_sum == 0.f ? -INFINITY : max * (softmax_scale / M_LOG2E) + sycl::native::log(cur_sum);
+        if constexpr (Training) {
+          if (indx == lane_id) {
+            tLSEr(0) = cur_sum == 0.f ? -INFINITY : max * (softmax_scale / M_LOG2E) + sycl::native::log(cur_sum);
+          }
         }
         auto cur_scale = (cur_sum == 0.f || cur_sum != cur_sum) ? 1.f : sycl::native::recip(cur_sum);
         CUTLASS_PRAGMA_UNROLL
@@ -224,10 +217,12 @@ public:
 
     copy(params.xe_store_o, out, tOi);
 
-    Tensor tLSEi = params.xe_store_lse.get_pvc_tensor(make_coord(0, m_offset, l_coord),
-                                                  make_shape(_, Int<1>{}, Int<1>{}));
+    if constexpr (Training) {
+      Tensor tLSEi = params.xe_store_lse.get_pvc_tensor(make_coord(0, m_offset, l_coord),
+                                                    make_shape(_, Int<1>{}, Int<1>{}));
 
-    copy(params.xe_store_lse, tLSEr, tLSEi);
+      copy(params.xe_store_lse, tLSEr, tLSEi);
+    }
   }
 
 private:

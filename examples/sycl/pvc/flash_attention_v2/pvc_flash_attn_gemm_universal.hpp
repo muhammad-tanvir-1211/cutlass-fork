@@ -134,17 +134,12 @@ public:
   static constexpr int SG_K = CollectiveMainloop::SG_K; // 64
 
   static_assert(ATOM_K * BLK_N == ATOM_N * BLK_K,
-                "The QKV multiplication in this implementation requires the squar block computation in per subgroup.");
+                "The QKV multiplication in this implementation requires the square block computation in per subgroup.");
 
   static constexpr int Vec = (get<0>(MmaAtomShape()) * get<1>(MmaAtomShape())) / SubgroupSize; // 8
   static constexpr int FragsM = get<0>(SubgroupTileShape{}) / get<0>(MmaAtomShape());          // 2
   static constexpr int FragsN = get<1>(SubgroupTileShape{}) / get<1>(MmaAtomShape());          // 4
 
-  // Kernel level shared memory storage
-  struct SharedStorage {
-    using EpilogueTensorStorage = typename CollectiveEpilogue::TensorStorage;
-    EpilogueTensorStorage epilogue;
-  };
 
   // Device side arguments
   struct Arguments {
@@ -202,7 +197,6 @@ public:
 
   CUTLASS_DEVICE
   void operator()(Params const &params, char *smem_buf) {
-    SharedStorage &shared_storage = *reinterpret_cast<SharedStorage *>(smem_buf);
     // Preconditions
     CUTE_STATIC_ASSERT(is_static<WorkgroupTileShape>::value);
     // Separate out problem shape for convenience
@@ -403,7 +397,7 @@ public:
       barrier_wait(barrier_scope);
     }
 
-    CollectiveEpilogue epilogue{params.epilogue, shared_storage.epilogue};
+    CollectiveEpilogue epilogue{params.epilogue};
 
     epilogue(params.problem_shape, blk_coord_mnkl, out_reg, max_reg, sum_reg, tiled_mma, params.softmax.scale);
   }

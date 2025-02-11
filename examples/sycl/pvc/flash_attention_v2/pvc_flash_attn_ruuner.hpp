@@ -56,6 +56,7 @@ struct Options {
   bool help;
   bool error;
   bool is_causal;
+  bool is_training;
 
   int batch, num_heads, seq_len, head_size, iterations;
   float softmax_scale;
@@ -93,6 +94,7 @@ struct Options {
         << "Options:\n\n"
         << "  --help                      If specified, displays this usage statement\n\n"
         << "  --is_causal                 Apply Causal Mask to the output of first Matmul\n"
+        << "  --is_training               Calculate LSE iff training\n"
         << "  --batch=<int>               Sets the Batch Size of the Multi-Head Self Attention module\n"
         << "  --num_heads=<int>           Sets the Number of Attention Heads of the Multi-Head Self Attention module\n"
         << "  --seq_len=<int>             Sets the Sequence length of the Multi-Head Self Attention module\n"
@@ -154,7 +156,7 @@ template <class GemmKernel> struct ExampleRunner {
   // Methods
   //
 
-  bool verify(const ProblemShapeType &problem_size, bool is_causal) {
+  bool verify(const ProblemShapeType &problem_size, bool is_causal, bool is_training) {
     auto [batch, num_heads, seq_len, head_size] = problem_size;
 
     int batch_size = batch * num_heads;
@@ -279,8 +281,8 @@ template <class GemmKernel> struct ExampleRunner {
     bool passed_o = cutlass::reference::device::BlockCompareRelativelyEqual(block_ref_O.get(), block_O.get(),
                                                                           block_O.size(), 0.5f, 0.5f);
 
-    bool passed_lse = cutlass::reference::device::BlockCompareRelativelyEqual(block_ref_LSE.get(), block_LSE.get(),
-                                                                          block_LSE.size(), 0.5f, 0.5f);
+    bool passed_lse = is_training ? cutlass::reference::device::BlockCompareRelativelyEqual(block_ref_LSE.get(), block_LSE.get(),
+                                                                          block_LSE.size(), 0.5f, 0.5f) : true;
 
     return passed_o && passed_lse;
   }
@@ -364,7 +366,7 @@ template <class GemmKernel> struct ExampleRunner {
     syclcompat::wait();
 
     // Verify that the result is correct
-    bool passed = verify(problem_size, options.is_causal);
+    bool passed = verify(problem_size, options.is_causal, options.is_training);
     std::cout << "Disposition: " << (passed ? "Passed" : "Failed") << std::endl;
 
     if (passed && options.iterations > 0) {
@@ -391,7 +393,7 @@ template <class GemmKernel> struct ExampleRunner {
   }
 };
 
-template <bool Causal, typename TileShape, typename TiledMma> struct FMHAConfig {
+template <bool Causal, bool Training, typename TileShape, typename TiledMma> struct FMHAConfig {
   static int run(const Options &options) {
 
     //
@@ -420,8 +422,8 @@ template <bool Causal, typename TileShape, typename TiledMma> struct FMHAConfig 
     using GmemTiledCopyStoreO = XE_2D_U32x8x16_ST_N;
     using GmemTiledCopyStoreLSE = XE_2D_U32x1x16_ST_N;
     using CollectiveEpilogue = cutlass::epilogue::collective::CollectiveEpilogueAttention<
-        EpilogueDispatchPolicy, TileShape, ElementAccumulator, cutlass::gemm::TagToStrideC_t<LayoutO>, ElementOutput,
-        cutlass::gemm::TagToStrideC_t<LayoutO>, GmemTiledCopyStoreO, GmemTiledCopyStoreLSE>;
+        Training, EpilogueDispatchPolicy, TileShape, ElementAccumulator, cutlass::gemm::TagToStrideC_t<LayoutO>,
+        ElementOutput, cutlass::gemm::TagToStrideC_t<LayoutO>, GmemTiledCopyStoreO, GmemTiledCopyStoreLSE>;
 
     // Mainloop
     using CollectiveMainloop = cutlass::gemm::collective::CollectiveMmaAttention<
