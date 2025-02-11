@@ -116,6 +116,7 @@ template <class GemmKernel> struct ExampleRunner {
   using StrideK = typename GemmKernel::StrideK;
   using StrideV = typename GemmKernel::StrideV;
   using StrideO = typename GemmKernel::StrideO;
+  using StrideLSE = typename GemmKernel::StrideLSE;
 
   using ElementQ = typename GemmKernel::ElementQ;
   using ElementK = typename GemmKernel::ElementK;
@@ -138,13 +139,16 @@ template <class GemmKernel> struct ExampleRunner {
   StrideK stride_K;
   StrideV stride_V;
   StrideO stride_O;
+  StrideLSE stride_LSE;
   uint64_t seed = 0;
 
   cutlass::DeviceAllocation<ElementQ> block_Q;
   cutlass::DeviceAllocation<ElementK> block_K;
   cutlass::DeviceAllocation<ElementV> block_V;
   cutlass::DeviceAllocation<ElementOutput> block_O;
+  cutlass::DeviceAllocation<ElementOutput> block_LSE;
   cutlass::DeviceAllocation<ElementOutput> block_ref_O;
+  cutlass::DeviceAllocation<ElementOutput> block_ref_LSE;
 
   //
   // Methods
@@ -235,6 +239,13 @@ template <class GemmKernel> struct ExampleRunner {
         }
       }
 
+      std::vector<ElementOutput> lse(seq_len);
+      for(int i = 0; i < lse.size(); i++) {
+        lse[i] = max_vec[i] / sqrt(static_cast<ElementOutput>((head_size))) + sycl::native::log(sum_vec[i]);
+      }
+
+      syclcompat::memcpy<ElementOutput>(block_ref_LSE.get() + b * seq_len, lse.data(), seq_len);
+
       std::vector<ElementV> host_P(host_S.size());
       for (int p = 0; p < host_P.size(); p++)
         host_P[p] = static_cast<ElementV>(host_S[p]);
@@ -265,10 +276,13 @@ template <class GemmKernel> struct ExampleRunner {
     syclcompat::wait();
 
     // Check if output from CUTLASS kernel and reference kernel are equal or not
-    bool passed = cutlass::reference::device::BlockCompareRelativelyEqual(block_ref_O.get(), block_O.get(),
+    bool passed_o = cutlass::reference::device::BlockCompareRelativelyEqual(block_ref_O.get(), block_O.get(),
                                                                           block_O.size(), 0.5f, 0.5f);
 
-    return passed;
+    bool passed_lse = cutlass::reference::device::BlockCompareRelativelyEqual(block_ref_LSE.get(), block_LSE.get(),
+                                                                          block_LSE.size(), 0.5f, 0.5f);
+
+    return passed_o && passed_lse;
   }
 
   /// Initialize operands to be used in the GEMM and reference GEMM
@@ -280,13 +294,16 @@ template <class GemmKernel> struct ExampleRunner {
     stride_K = cutlass::make_cute_packed_stride(StrideK{}, cute::make_shape(seq_len, head_size, batch * num_heads));
     stride_V = cutlass::make_cute_packed_stride(StrideV{}, cute::make_shape(head_size, seq_len, batch * num_heads));
     stride_O = cutlass::make_cute_packed_stride(StrideO{}, cute::make_shape(seq_len, head_size, batch * num_heads));
+    stride_LSE = cutlass::make_cute_packed_stride(StrideLSE{}, cute::make_shape(1, seq_len, batch * num_heads));
 
     auto count = batch * num_heads * seq_len * head_size;
     block_Q.reset(count);
     block_K.reset(count);
     block_V.reset(count);
     block_O.reset(count);
+    block_LSE.reset(count / head_size);
     block_ref_O.reset(count);
+    block_ref_LSE.reset(count / head_size);
 
     initialize_block(block_Q, seed + 2023);
     initialize_block(block_K, seed + 2022); // assume K is already transposed
@@ -323,7 +340,7 @@ template <class GemmKernel> struct ExampleRunner {
         problem_size,
         {block_Q.get(), stride_Q, block_K.get(), stride_K, block_V.get(), stride_V},
         {options.softmax_scale},
-        {block_O.get(), stride_O},
+        {block_O.get(), stride_O, block_LSE.get(), stride_LSE},
         hw_info};
 
     // GemmKernel gemm_op;
@@ -400,10 +417,11 @@ template <bool Causal, typename TileShape, typename TiledMma> struct FMHAConfig 
     using GmemTiledCopyQ = XE_2D_U16x16x32_LD_N;
     using GmemTiledCopyK = XE_2D_U16x16x16_LD_T;
     using GmemTiledCopyV = XE_2D_U16x32x32_LD_V;
-    using GmemTiledCopyStore = XE_2D_U32x8x16_ST_N;
+    using GmemTiledCopyStoreO = XE_2D_U32x8x16_ST_N;
+    using GmemTiledCopyStoreLSE = XE_2D_U32x1x16_ST_N;
     using CollectiveEpilogue = cutlass::epilogue::collective::CollectiveEpilogueAttention<
         EpilogueDispatchPolicy, TileShape, ElementAccumulator, cutlass::gemm::TagToStrideC_t<LayoutO>, ElementOutput,
-        GmemTiledCopyStore>;
+        cutlass::gemm::TagToStrideC_t<LayoutO>, GmemTiledCopyStoreO, GmemTiledCopyStoreLSE>;
 
     // Mainloop
     using CollectiveMainloop = cutlass::gemm::collective::CollectiveMmaAttention<

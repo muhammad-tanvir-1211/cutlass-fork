@@ -104,6 +104,8 @@ public:
   using CollectiveEpilogue = CollectiveEpilogue_;
   using ElementO = typename CollectiveEpilogue::ElementO;
   using StrideO = typename CollectiveEpilogue::StrideO;
+
+  using StrideLSE = typename CollectiveEpilogue::StrideLSE;
   using ElementLSE = typename CollectiveEpilogue::ElementLSE;
   using EpilogueArguments = typename CollectiveEpilogue::Arguments;
   using EpilogueParams = typename CollectiveEpilogue::Params;

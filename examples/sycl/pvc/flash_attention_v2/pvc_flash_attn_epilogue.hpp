@@ -55,8 +55,8 @@ template <class DispatchPolicy, class... Args> class CollectiveEpilogueAttention
   static_assert(cutlass::detail::dependent_false<DispatchPolicy>, "Could not find an epilogue specialization.");
 };
 
-template <class CtaTileMNK_, class ElementO_, class StrideO_, class ElementLSE_, class CopyOpO_>
-class CollectiveEpilogueAttention<IntelPVCEpilogue, CtaTileMNK_, ElementO_, StrideO_, ElementLSE_, CopyOpO_> {
+template <class CtaTileMNK_, class ElementO_, class StrideO_, class ElementLSE_, class StrideLSE_, class CopyOpO_, class CopyOpLSE_>
+class CollectiveEpilogueAttention<IntelPVCEpilogue, CtaTileMNK_, ElementO_, StrideO_, ElementLSE_, StrideLSE_, CopyOpO_, CopyOpLSE_>{
 public:
   //
   // Type Aliases
@@ -66,8 +66,10 @@ public:
   using ElementO = ElementO_;
   using ElementAccumulator = ElementO_;
   using StrideO = StrideO_;
+  using StrideLSE = StrideLSE_;
   using ElementLSE = ElementLSE_;
   using CopyOpO = CopyOpO_;
+  using CopyOpLSE = CopyOpLSE_;
 
   using GmemTiledCopyO = CopyOpO;
   using ElementOutput = ElementO_;
@@ -82,6 +84,10 @@ public:
   using XE_Copy_O = decltype(make_xe_2d_copy(
       Copy_Atom<Copy_Traits<CopyOpO, StrideO>, ElementO>{}.with(make_tensor(
           make_gmem_ptr(static_cast<ElementO const *>(nullptr)), make_layout(make_shape(0, 0, 0), StrideO{}))),
+      Layout<Shape<_1, Int<SubgroupSize>>>{}));
+  using XE_Copy_LSE = decltype(make_xe_2d_copy(
+      Copy_Atom<Copy_Traits<CopyOpLSE, StrideLSE>, ElementLSE>{}.with(make_tensor(
+          make_gmem_ptr(static_cast<ElementLSE const *>(nullptr)), make_layout(make_shape(0, 0, 0), StrideLSE{}))),
       Layout<Shape<_1, Int<SubgroupSize>>>{}));
 
 private:
@@ -103,11 +109,14 @@ public:
   struct Arguments {
     ElementO const *ptr_O;
     StrideO dO;
+    ElementLSE const* ptr_LSE;
+    StrideLSE dLSE;
   };
 
   // Device side epilogue params
   struct Params {
     XE_Copy_O xe_store_o;
+    XE_Copy_LSE xe_store_lse;
   };
 
   //
@@ -125,8 +134,15 @@ public:
                                      make_layout(make_shape(seq_len, head_size, batch * num_heads), args.dO))),
                                  Layout<Shape<_1, Int<SubgroupSize>>>{});
 
+    XE_Copy_LSE xe_store_lse = {};
+    xe_store_lse = make_xe_2d_copy(Copy_Atom<Copy_Traits<CopyOpLSE, StrideLSE>, ElementLSE>{}.with(make_tensor(
+                                     make_gmem_ptr(static_cast<ElementLSE const *>(args.ptr_LSE)),
+                                     make_layout(make_shape(1, seq_len, batch * num_heads), args.dLSE))),
+                                 Layout<Shape<_1, Int<SubgroupSize>>>{});
+
     return {
         xe_store_o,
+        xe_store_lse
     };
   }
 
@@ -180,13 +196,18 @@ public:
     auto n_offset = n_coord * BLK_N + (get_sub_group_id() % ATOM_N) * SG_N;
     auto l_offset = l_coord;
     auto g = syclcompat::get_nd_item<1>().get_sub_group();
+    int lane_id = g.get_local_id()[0];
+
+    Tensor tLSEr = make_tensor<ElementLSE>(Shape<_1, _1, _1>{});
 
     CUTLASS_PRAGMA_UNROLL
-    for (int y = 0; y < FragsM; y++) {
+    for (int y = 0, indx = 0; y < FragsM; y++) {
       CUTLASS_PRAGMA_UNROLL
       for (int x = 0; x < Vec; x++) {
-        int indx = y * Vec + x;
         auto cur_sum = reduce_over_group(g, sum(indx), sycl::plus<>());
+        if (indx++ == lane_id) {
+          tLSEr(0) = cur_sum == 0.f ? -INFINITY : max * (softmax_scale / M_LOG2E) + sycl::native::log(cur_sum);
+        }
         auto cur_scale = (cur_sum == 0.f || cur_sum != cur_sum) ? 1.f : sycl::native::recip(cur_sum);
         CUTLASS_PRAGMA_UNROLL
         for (int z = 0; z < FragsN; z++) {
@@ -202,6 +223,11 @@ public:
                                                   make_shape(_, Int<FragsM>{}, Int<FragsN>{}));
 
     copy(params.xe_store_o, out, tOi);
+
+    Tensor tLSEi = params.xe_store_lse.get_pvc_tensor(make_coord(0, m_offset, l_coord),
+                                                  make_shape(_, Int<1>{}, Int<1>{}));
+
+    copy(params.xe_store_lse, tLSEr, tLSEi);
   }
 
 private:
