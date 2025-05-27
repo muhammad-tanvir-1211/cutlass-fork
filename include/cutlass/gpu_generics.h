@@ -481,7 +481,89 @@ cudaError_t cudaOccupancyMaxActiveBlocksPerMultiprocessorWithFlags(
 // Expose dim3 in the cute namespace
 namespace cute {
   using dim3 = syclcompat::dim3;
+} // cute namespace
+
+#include "bfloat16.h"
+#include "half.h"
+
+template <typename T>
+CUTLASS_DEVICE T exp2(T const& val);
+
+template <>
+CUTLASS_DEVICE cutlass::bfloat16_t exp2(cutlass::bfloat16_t const& val) {
+  return static_cast<cutlass::bfloat16_t>(sycl::native::exp2(static_cast<sycl::half>(val)));
 }
+
+template <>
+CUTLASS_DEVICE cutlass::half_t exp2(cutlass::half_t const& val) {
+  return static_cast<cutlass::half_t>(sycl::native::exp2(static_cast<sycl::half>(val)));
+}
+
+template <>
+CUTLASS_DEVICE float exp2(float const& val) {
+  return sycl::native::exp2(val);
+}
+
+template <typename T>
+CUTLASS_DEVICE T max(T const& val1, T const& val2);
+
+template <>
+CUTLASS_DEVICE cutlass::bfloat16_t max(cutlass::bfloat16_t const& val1, cutlass::bfloat16_t const& val2) {
+  return static_cast<cutlass::bfloat16_t>(sycl::max(static_cast<sycl::half>(val1), static_cast<sycl::half>(val2)));
+}
+
+template <>
+CUTLASS_DEVICE cutlass::half_t max(cutlass::half_t const& val1, cutlass::half_t const& val2) {
+  return static_cast<cutlass::half_t>(sycl::max(static_cast<sycl::half>(val1), static_cast<sycl::half>(val2)));
+}
+
+template <>
+CUTLASS_DEVICE float max(float const& val1, float const& val2) {
+  return sycl::max(val1, val2);
+}
+
+template <typename T>
+CUTLASS_DEVICE T reduce_over_group_max(T const& val);
+
+template <>
+CUTLASS_DEVICE cutlass::bfloat16_t reduce_over_group_max(cutlass::bfloat16_t const& val) {
+  auto sg = syclcompat::get_nd_item<1>().get_sub_group();
+  return static_cast<cutlass::bfloat16_t>(reduce_over_group(sg, static_cast<sycl::half>(val), sycl::maximum<>()));
+}
+
+template <>
+CUTLASS_DEVICE cutlass::half_t reduce_over_group_max(cutlass::half_t const& val) {
+  auto sg = syclcompat::get_nd_item<1>().get_sub_group();
+  return static_cast<cutlass::half_t>(reduce_over_group(sg, static_cast<sycl::half>(val), sycl::maximum<>()));
+}
+
+template <>
+CUTLASS_DEVICE float reduce_over_group_max(float const& val) {
+  auto sg = syclcompat::get_nd_item<1>().get_sub_group();
+  return reduce_over_group(sg, val, sycl::maximum<>());
+}
+
+template <typename T>
+CUTLASS_DEVICE T reduce_over_group_plus(T const& val);
+
+template <>
+CUTLASS_DEVICE cutlass::bfloat16_t reduce_over_group_plus(cutlass::bfloat16_t const& val) {
+  auto sg = syclcompat::get_nd_item<1>().get_sub_group();
+  return static_cast<cutlass::bfloat16_t>(reduce_over_group(sg, static_cast<sycl::half>(val), sycl::plus<>()));
+}
+
+template <>
+CUTLASS_DEVICE cutlass::half_t reduce_over_group_plus(cutlass::half_t const& val) {
+  auto sg = syclcompat::get_nd_item<1>().get_sub_group();
+  return static_cast<cutlass::half_t>(reduce_over_group(sg, static_cast<sycl::half>(val), sycl::plus<>()));
+}
+
+template <>
+CUTLASS_DEVICE float reduce_over_group_plus(float const& val) {
+  auto sg = syclcompat::get_nd_item<1>().get_sub_group();
+  return reduce_over_group(sg, val, sycl::plus<>());
+}
+
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -61,13 +61,17 @@ struct Options {
   bool is_causal;
   bool varlen = false;
   std::string scheduler;
+  bool use_bf16_input;
+  bool use_fp16_input;
+  bool use_bf16_accum;
+  bool use_fp16_accum;
 
   int batch, num_heads_q, num_heads_kv, seq_len_qo, seq_len_kv, seq_len_kv_cache, head_size_qk, head_size_vo, iterations;
-  float softmax_scale;
 
   Options()
       : help(false), error(false), is_causal(false), varlen(false), batch(32), num_heads_q(16), num_heads_kv(16), seq_len_qo(512), head_size_qk(128),
-        seq_len_kv(512), seq_len_kv_cache(0), head_size_vo(128), iterations(100), softmax_scale(1.f), scheduler("Individual") {}
+        seq_len_kv(512), seq_len_kv_cache(0), head_size_vo(128), iterations(100), scheduler("Individual"), use_bf16_accum(false), use_fp16_accum(false),
+        use_bf16_input(false), use_fp16_input(false) {}
 
   // Parses the command line
   void parse(int argc, char const **args) {
@@ -86,6 +90,47 @@ struct Options {
       varlen = true;
     }
 
+    if (cmd.check_cmd_line_flag("use_bf16_accum")) {
+      use_bf16_accum = true;
+      use_bf16_input = true;
+    }
+
+    if (cmd.check_cmd_line_flag("use_fp16_accum")) {
+      use_fp16_accum = true;
+      use_fp16_input = true;
+    }
+
+    if (cmd.check_cmd_line_flag("use_bf16_input")) {
+      use_bf16_input = true;
+    }
+
+    if(use_bf16_input == false && use_fp16_input == false) {
+      // Set default to use bf16 inputs.
+      use_bf16_input = true;
+    }
+
+    if (cmd.check_cmd_line_flag("use_fp16_input")) {
+      use_fp16_input = true;
+    }
+
+    if(use_bf16_accum == true && use_fp16_input == true) {
+      std::cerr << "Cannot use BF16 accumulator with FP16 inputs" << std::endl;
+      error = true;
+      return;
+    }
+
+    if (use_fp16_accum == true && use_bf16_input == true) {
+      std::cerr << "Cannot use FP16 accumulator with BF16 inputs" << std::endl;
+      error = true;
+      return;
+    }
+
+    if(use_fp16_accum == true && use_bf16_accum == true) {
+      std::cerr << "Cannot use BF16 accumulator and FP16 accumulator simultaneously" << std::endl;
+      error = true;
+      return;
+    }
+
     cmd.get_cmd_line_argument("scheduler", scheduler, std::string("Individual"));
 
     cmd.get_cmd_line_argument("batch", batch, 32);
@@ -97,8 +142,6 @@ struct Options {
     cmd.get_cmd_line_argument("head_size_vo", head_size_vo, 128);
     cmd.get_cmd_line_argument("head_size_qk", head_size_qk, head_size_vo);
     cmd.get_cmd_line_argument("iterations", iterations, 100);
-
-    softmax_scale = 1 / sqrt(static_cast<float>(head_size_qk));
   }
 
   /// Prints the usage statement.
@@ -109,6 +152,8 @@ struct Options {
         << "  --help                      If specified, displays this usage statement\n\n"
         << "  --is_causal                 Apply Causal Mask to the output of first Matmul\n"
         << "  --varlen                    Enable variable sequence length\n"
+        << "  --use_bf16_accum            Enable bfloat16_t accumulator for Matrix Multiplication\n"
+        << "  --use_fp16_accum            Enable half_t accumulator for Matrix Multiplication\n"
         << "  --scheduler                 Only Individual Scheduler supported\n"
         << "  --batch=<int>               Sets the Batch Size of the Multi-Head Self Attention module\n"
         << "  --num_heads_q=<int>         Sets the Number of Attention Heads for Key-Value pair the Multi-Head Self Attention module\n"
@@ -271,9 +316,9 @@ template <class FMHAKernel, bool isVarLen> struct ExampleRunner {
         cutlass::TensorRef ref_S(block_S.get(), LayoutQ::packed({seq_len_qo, seq_len_kv_total}));
         cutlass::TensorRef ref_O(block_ref_O.get() + offset_o, LayoutO::packed({seq_len_qo, head_size_vo}));
 
-        cutlass::reference::device::GemmComplex({seq_len_qo, seq_len_kv_total, head_size_qk}, 1.f, ref_Q,
+        cutlass::reference::device::GemmComplex({seq_len_qo, seq_len_kv_total, head_size_qk}, ElementAccumulator{1.f}, ref_Q,
                                                 cutlass::ComplexTransform::kNone, ref_K, cutlass::ComplexTransform::kNone,
-                                                0.f, ref_S, ref_S, ElementAccumulator(0),
+                                                ElementAccumulator{0.f}, ref_S, ref_S, ElementAccumulator(0),
                                                 1,                   // batch_count
                                                 seq_len_qo * head_size_qk, // batch_stride_Q
                                                 seq_len_kv_total * head_size_qk, // batch_stride_K
@@ -299,13 +344,13 @@ template <class FMHAKernel, bool isVarLen> struct ExampleRunner {
           for (int row = 0; row < seq_len_qo; row++) {
             for (int col = start_col; col < seq_len_kv_total; col++) {
               if (col - full_tile_offset > row + start_col - discard_seq_coord)
-                host_S[col + row * seq_len_kv_total] = -INFINITY;
+                host_S[col + row * seq_len_kv_total] = ElementOutput{-INFINITY};
             }
           }
         }
 
         // compute max element per row of S
-        std::vector<ElementOutput> max_vec(seq_len_qo, -INFINITY);
+        std::vector<ElementOutput> max_vec(seq_len_qo, ElementOutput{-INFINITY});
         for (int row = 0; row < seq_len_qo; row++) {
           int idx = row * seq_len_kv_total;
           int max_idx = row;
@@ -321,7 +366,7 @@ template <class FMHAKernel, bool isVarLen> struct ExampleRunner {
           int idx = row * seq_len_kv_total;
           int max_idx = row;
           for (int col = 0; col < seq_len_kv_total; col++, idx++) {
-            host_S[idx] = expf((host_S[idx] - max_vec[max_idx]) / sqrt(static_cast<ElementOutput>((head_size_qk))));
+            host_S[idx] = static_cast<ElementOutput>(expf((host_S[idx] - max_vec[max_idx]) / sqrt(static_cast<float>((head_size_qk)))));
           }
         }
 
@@ -339,10 +384,16 @@ template <class FMHAKernel, bool isVarLen> struct ExampleRunner {
           sum_idx = row;
           for (int col = 0; col < seq_len_kv_total; col++, idx++) {
             if(is_causal && row < discard_seq_coord) { 
-              host_S[idx] = 0;
+              host_S[idx] = ElementOutput{0};
             } else {
               host_S[idx] /= sum_vec[sum_idx];
             }
+          }
+        }
+
+        for (int row = 0; row < seq_len_qo; row++) {
+          for (int col = 0; col < seq_len_kv_total; col++) {
+            printf("batch: %d | host_S[%d][%d]: %f\n", b * num_heads_q + h, row, col, static_cast<float>(host_S[col + row * seq_len_kv_total]));
           }
         }
 
@@ -358,9 +409,9 @@ template <class FMHAKernel, bool isVarLen> struct ExampleRunner {
 
         cutlass::TensorRef ref_P(block_P.get(), LayoutQ::packed({seq_len_qo, seq_len_kv_total}));
 
-        cutlass::reference::device::GemmComplex({seq_len_qo, head_size_vo, seq_len_kv_total}, 1.f, ref_P,
+        cutlass::reference::device::GemmComplex({seq_len_qo, head_size_vo, seq_len_kv_total}, ElementAccumulator{1.f}, ref_P,
                                                 cutlass::ComplexTransform::kNone, ref_V, cutlass::ComplexTransform::kNone,
-                                                0.f, ref_O, ref_O, ElementAccumulator(0),
+                                                ElementAccumulator{0.f}, ref_O, ref_O, ElementAccumulator(0),
                                                 1,                   // batch_count
                                                 seq_len_qo * seq_len_kv_total,   // batch_stride_P
                                                 seq_len_kv_total * head_size_vo, // batch_stride_V
@@ -388,7 +439,7 @@ template <class FMHAKernel, bool isVarLen> struct ExampleRunner {
 
     // Check if output from CUTLASS kernel and reference kernel are equal or not
     bool passed = cutlass::reference::device::BlockCompareRelativelyEqual(block_ref_O.get(), block_O.get(),
-                                                                          block_O.size(), 0.5f, 0.5f);
+                                                                          block_O.size(), ElementOutput{0.5f}, ElementOutput{0.5f});
 
     return passed;
   }
@@ -576,7 +627,7 @@ template <class FMHAKernel, bool isVarLen> struct ExampleRunner {
         block_V.get(), stride_V,
         block_K_cache.get(), stride_K_cache,
         block_V_cache.get(), stride_V_cache},
-        {options.softmax_scale},
+        {ElementAccumulator{1 / sqrt(static_cast<float>(options.head_size_qk))}},
         {block_O.get(), stride_O},
         hw_info};
 
@@ -645,7 +696,7 @@ template <class FMHAKernel, bool isVarLen> struct ExampleRunner {
   }
 };
 
-template <bool Causal, typename TileShapeQK, typename TileShapePV, typename TileShapeOutput, typename SubgroupLayout, bool isVarLen> struct FMHAConfig {
+template <typename MMAConfig, bool Causal, typename TileShapeQK, typename TileShapePV, typename TileShapeOutput, typename SubgroupLayout, bool isVarLen> struct FMHAConfig {
 
   template <class Scheduler = cutlass::flash_attention::FlashDecodeIndividualScheduler>
   static int run(const Options &options) {
@@ -659,21 +710,21 @@ template <bool Causal, typename TileShapeQK, typename TileShapePV, typename Tile
 
     // The code section below describes datatype for input, output matrices and computation between
     // elements in input matrices.
-    using ElementAccumulator = float;     // <- data type of accumulator
-    using ElementComputeEpilogue = float; // <- data type of epilogue operations
-    using ElementInputQ = bfloat16_t;     // <- data type of elements in input matrix A
-    using ElementInputKV = bfloat16_t;    // <- data type of elements in input matrix B
-    using ElementOutput = float;          // <- data type of elements in output matrix D
-        
+    using ElementAccumulator = typename MMAConfig::ElementAccumulator;     // <- data type of accumulator
+    using ElementComputeEpilogue = typename MMAConfig::ElementOutput; // <- data type of epilogue operations
+    using ElementInputQ = typename MMAConfig::ElementQ;     // <- data type of elements in input matrix A
+    using ElementInputKV = typename MMAConfig::ElementKV;    // <- data type of elements in input matrix B
+    using ElementOutput = typename MMAConfig::ElementOutput;          // <- data type of elements in output matrix D
+
     constexpr int PipelineStages = 2;
     using GEMMDispatchPolicy = cutlass::gemm::MainloopIntelXeXMX16<PipelineStages>;
     using EpilogueDispatchPolicy = cutlass::epilogue::IntelXeXMX16;
 
-    using MMAOperation = XE_1x16x16_F32BF16BF16F32_TT;
-    using GmemTiledCopyQ = XE_2D_U16x1x16_LD_N;
-    using GmemTiledCopyK = XE_2D_U16x16x16_LD_T;
-    using GmemTiledCopyV = XE_2D_U16x32x32_LD_V;
-    using GmemTiledCopyStore = XE_2D_U32x1x16_ST_N;
+    using MMAOperation = typename MMAConfig::MMAOperation;
+    using GmemTiledCopyQ = typename MMAConfig::GmemTiledCopyQ;
+    using GmemTiledCopyK = typename MMAConfig::GmemTiledCopyK;
+    using GmemTiledCopyV = typename MMAConfig::GmemTiledCopyV;
+    using GmemTiledCopyStore = typename MMAConfig::GmemTiledCopyStore;
     using CollectiveEpilogue = cutlass::flash_attention::collective::FlashDecodeEpilogue<
         EpilogueDispatchPolicy, MMAOperation, TileShapeOutput, SubgroupLayout, ElementAccumulator, cutlass::gemm::TagToStrideC_t<LayoutO>,
         ElementOutput, GmemTiledCopyStore>;

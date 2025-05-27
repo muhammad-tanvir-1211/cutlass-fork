@@ -115,7 +115,7 @@ public:
       for (int z = 0; z < FragsN; z++) {
         auto base_indx = indx + (z * Vec * FragsM);
         Element eq = frag_s(base_indx) - max_scale_bcast;
-        frag_s(base_indx) = sycl::native::exp2(eq);
+        frag_s(base_indx) = exp2(eq);
         sum(indx) += frag_s(base_indx);
       }
     }
@@ -134,11 +134,11 @@ public:
       CUTLASS_PRAGMA_UNROLL
       for (int z = 0; z < FragsN; z++) {
         auto base_indx = indx + (z * Vec * FragsM);
-        curr_max = sycl::max(curr_max, src(base_indx));
+        curr_max = max(curr_max, src(base_indx));
         src(base_indx) *= params.scale;
       }
 
-      curr_max = reduce_over_group(sg, curr_max, sycl::maximum<>());
+      curr_max = reduce_over_group_max(curr_max);
 
       if(sg_local_id == 0) {
         stensor_max(indx + sg_group_id * FragsM) = curr_max;
@@ -149,11 +149,11 @@ public:
 
     CUTLASS_PRAGMA_UNROLL
     for (int indx = 0; indx < FragsM; indx++) {
-      Element curr_max = -INFINITY;
+      Element curr_max = Element{-INFINITY};
       if(sg_local_id == indx) {
         CUTLASS_PRAGMA_UNROLL
         for (int i = 0; i < Num_SGs; i++) {
-          curr_max = sycl::max(curr_max, stensor_max(i * FragsM + sg_local_id));
+          curr_max = max(curr_max, stensor_max(i * FragsM + sg_local_id));
         }
         max_val = curr_max;
       }
@@ -181,7 +181,7 @@ public:
       const int sg_size = sg.get_local_range()[0];
 
       Element max_scale{max_val * params.scale};
-      Element exp_scale{sycl::native::exp2(max_prev * params.scale - max_scale)};
+      Element exp_scale{exp2(max_prev * params.scale - max_scale)};
 
       CUTLASS_PRAGMA_UNROLL
       for (int indx = 0; indx < FragsM; indx++) {
@@ -191,7 +191,7 @@ public:
         CUTLASS_PRAGMA_UNROLL
         for (int z = 0; z < FragsNS; z++) {
           auto base_indx = indx + (z * Vec * FragsM);
-          frag_s(base_indx) = sycl::native::exp2((frag_s(base_indx) - max_scale_bcast));
+          frag_s(base_indx) = exp2((frag_s(base_indx) - max_scale_bcast));
           sum(indx) += frag_s(base_indx);
         }
 

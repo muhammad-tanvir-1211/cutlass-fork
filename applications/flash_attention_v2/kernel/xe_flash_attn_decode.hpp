@@ -345,6 +345,10 @@ public:
         CollectiveSoftmaxEpilogue softmax(params.softmax);
         softmax.template operator()<Num_SGs>(split == 0, tSr, max_reg, sum_reg, shmem_max_tensor, out_reg);
 
+        for(int i = 0; i < tSr.size(); i++) {
+          printf("ThreadIdxX: %lu | tSr(%d): %f\n", ThreadIdxX(), i, static_cast<float>(tSr(i)));
+        }
+
         auto gV_ = is_KV_cache ? gV(_, _, split) : gV(_, _, split - kv_splits_cache);
 
         collective_mma.template mmaPV<VSlicer>(out_reg, tSr, gV_, out_reg, mainloop_params, is_KV_cache);
@@ -391,7 +395,7 @@ public:
               CUTLASS_PRAGMA_UNROLL
               for (int row = 0; row < Vec; row++, row_idx++) { // Set this bound based on seq_len_qo
                 if (col_idx - column_offset > row_idx + seq_len_kv_cache)
-                  tSr(row, m, n) = -INFINITY;
+                  tSr(row, m, n) = ElementAccumulator{-INFINITY};
               }
             }
           }

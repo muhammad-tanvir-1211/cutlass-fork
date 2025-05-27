@@ -383,11 +383,17 @@ template <class CopyOp, class StrideIndicator = cute::Stride<int64_t, cute::Int<
     dtype *base_addr = (dtype *)traits.base_ptr;
     
     auto [m, n, l] = dst.data().coord_;
+    // constexpr auto inst_size_bits = detail::size_of_inst_bits<CopyOp, dtype>;
 
     CopyOp::copy(base_addr + static_cast<size_t>(l) * traits.stride_l,
                  traits.width * sizeof(dtype), traits.height,
                  traits.pitch * sizeof(dtype),
                  intel::coord_t{(int)n, (int)m}, &*src.data());
+/*     CopyOp::copy(base_addr + static_cast<size_t>(l) * traits.stride_l,
+                 (traits.width * sizeof_bits_v<dtype>) / sizeof_bits_v<int8_t>, traits.height,
+                 (traits.pitch * sizeof_bits_v<dtype>) / sizeof_bits_v<int8_t>,
+                 intel::coord_t{(int)(n * sizeof_bits_v<dtype> / inst_size_bits), (int)m},
+                 raw_pointer_cast(&((&*src.data())[0]))); */
   }
 
   template <class... TensorArgs>
@@ -1957,11 +1963,11 @@ struct Copy_Traits_<XE_2D_U16x1x16_ST_N, args_t...>
   // Logical thread id to thread idx
   using ThrID = Layout<_16>;
   // Map from (src-thr,src-val) to bit
-  using SrcLayout = Layout<Shape <_16,_16>,
-                           Stride<_16, _1>>;
+  using SrcLayout = Layout<Shape <_16, Shape <_16, _1>>,
+                           Stride<_16, Stride< _1, _256>>>;
   // Map from (dst-thr,dst-val) to bit
-  using DstLayout = Layout<Shape <_16,_16>,
-                           Stride< _0, _1>>;
+  using DstLayout = Layout<Shape <_16, Shape <_16, _1>>,
+                           Stride< _0, Stride< _1, _256>>>;
   // Reference map from (thr,val) to bit
   using RefLayout = SrcLayout;
 

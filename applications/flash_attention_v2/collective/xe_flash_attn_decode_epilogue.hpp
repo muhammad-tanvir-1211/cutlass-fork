@@ -180,7 +180,7 @@ public:
       CUTLASS_PRAGMA_UNROLL
       for (int x = 0; x < 1; x++) {// only 1 row is valid
         int indx = y * Vec + x;
-        auto cur_sum = reduce_over_group(sg, sum(indx), sycl::plus<>());
+        auto cur_sum = reduce_over_group_plus(sum(indx));
 
         if(sg_local_id == 0) {
           shmem_tensor_sum(indx + sg_group_id * FragsM) = cur_sum;
@@ -209,7 +209,7 @@ public:
             }
           }
 
-          auto cur_scale = (cur_sum == 0.0f || cur_sum != cur_sum) ? 1.0f : sycl::native::recip(cur_sum);
+          auto cur_scale = static_cast<ElementCompute>((cur_sum == ElementCompute{0.0f} || cur_sum != cur_sum) ? 1.0f : sycl::native::recip(static_cast<float>(cur_sum)));
 
           CUTLASS_PRAGMA_UNROLL
           for (int z = 0; z < FragsN; z++) {

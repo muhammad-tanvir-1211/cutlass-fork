@@ -314,7 +314,15 @@ struct FlashDecodeMma<gemm::MainloopIntelXeXMX16<Stages>, ProblemShapeType_, Ele
 #endif
 
     // 7) Convert S to P (FP32 -> BF16)
-    Tensor tPr = convert_type<typename TiledMmaPV::ValTypeA>(tSr);
+    // Tensor tPr = convert_type<typename TiledMmaPV::ValTypeA>(tSr);
+    Tensor tPr = make_tensor<typename TiledMmaPV::ValTypeA>(tSr.layout());
+    // if constexpr (std::is_same_v<typename TiledMmaPV::ValTypeA, typename FragS::element_type>) {
+      copy(tSr, tPr);
+    // } else {
+    //   Tensor temp = convert_type<typename TiledMmaPV::ValTypeA>(tSr);
+    //   copy(temp, tPr);
+    // }
+
 
     //
     // Mainloop
